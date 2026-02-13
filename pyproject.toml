@@ -1,0 +1,25 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "train4all"
+version = "0.1.0"
+description = "A simple, flexible, and user-friendly PyTorch trainer framework."
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "matplotlib",
+    "numpy",
+    "nvidia-ml-py3",
+    "psutil",
+    "tqdm",
+    "wmi; platform_system == 'Windows'",
+]
+authors = [
+    { name = "tomoking2004", email = "tomoharu0111nakano@gmail.com" }
+]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["train4all*"]
