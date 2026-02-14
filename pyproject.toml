@@ -7,7 +7,7 @@ name = "train4all"
 version = "0.1.0"
 description = "A simple, flexible, and user-friendly PyTorch trainer framework."
 readme = "README.md"
-requires-python = ">=3.10"
+requires-python = ">=3.12"
 dependencies = [
     "matplotlib",
     "numpy",
