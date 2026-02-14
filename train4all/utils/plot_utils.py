@@ -1,78 +1,100 @@
 from pathlib import Path
-from typing import Dict, Sequence
+from collections.abc import Mapping, Sequence
 
 import matplotlib.pyplot as plt
 from matplotlib.ticker import MaxNLocator
 
 
-def get_metric_plot_title(metric_name: str, phase: str | None = None, prefix: str | None = None) -> str:
+def get_metric_plot_title(
+    metric_name: str,
+    phase: str | None = None,
+    prefix: str | None = None,
+) -> str:
     parts: list[str] = []
 
     if prefix:
         parts.append(prefix)
-    
+
     parts.append(metric_name)
 
     if phase:
         parts.append(f"({phase})")
 
-    title = " ".join(parts)
-    return title[0].upper() + title[1:]
+    title = " ".join(parts).strip()
+    return title[:1].upper() + title[1:] if title else ""
 
 
-def get_metric_plot_filename(metric_name: str, phase: str | None = None, prefix: str | None = None) -> str:
+def get_metric_plot_filename(
+    metric_name: str,
+    phase: str | None = None,
+    prefix: str | None = None,
+    extension: str = "png",
+) -> str:
     parts: list[str] = []
 
     if prefix:
         parts.append(prefix)
-    
+
     parts.append(metric_name)
 
     if phase:
         parts.append(phase)
 
-    #return "_".join(parts) + ".pdf"
-    return "_".join(parts) + ".png"
+    filename = "_".join(parts)
+    return f"{filename}.{extension}"
 
 
 def save_curves_plot(
-    curves: Dict[str, Sequence[float]],
-    path: str | Path,
+    curves: Mapping[str, Sequence[float]],
+    path: Path | str,
+    *,
     title: str | None = None,
     xlabel: str | None = None,
     ylabel: str | None = None,
     alpha: float = 0.9,
-) -> None:
+    dpi: int = 150,
+    figsize: tuple[float, float] = (6.0, 4.0),
+) -> Path:
     """
     Save a plot containing multiple labeled 1D curves.
-
-    Args:
-        curves (dict[str, Sequence[float]]): Mapping of label → numeric values.
-        path (str | Path): Destination file path for the figure.
-        title (str | None): Plot title.
-        xlabel (str | None): X-axis label.
-        ylabel (str | None): Y-axis label.
-        alpha (float): Line transparency.
+    Fully state-isolated (no global pyplot state leakage).
     """
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
 
-    plt.figure()
+    fig, ax = plt.subplots(figsize=figsize)
+
+    has_data = False
 
     for label, values in curves.items():
-        if not values:
+        if len(values) == 0:
             continue
-        plt.plot(range(1, len(values) + 1), values, label=label, alpha=alpha)
+
+        has_data = True
+
+        ax.plot(
+            range(1, len(values) + 1),
+            values,
+            label=label,
+            alpha=alpha,
+        )
 
     if title:
-        plt.title(title)
-    if xlabel:
-        plt.xlabel(xlabel)
-    if ylabel:
-        plt.ylabel(ylabel)
+        ax.set_title(title)
 
-    plt.legend()
-    plt.gca().xaxis.set_major_locator(MaxNLocator(integer=True))
-    plt.tight_layout()
-    plt.savefig(path)
-    plt.close("all")
+    if xlabel:
+        ax.set_xlabel(xlabel)
+
+    if ylabel:
+        ax.set_ylabel(ylabel)
+
+    if has_data:
+        ax.legend()
+
+    ax.xaxis.set_major_locator(MaxNLocator(integer=True))
+
+    fig.tight_layout()
+    fig.savefig(path, dpi=dpi)
+    plt.close(fig)
+
+    return path
