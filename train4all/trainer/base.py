@@ -5,7 +5,7 @@ import shutil
 from datetime import datetime
 from functools import wraps
 from pathlib import Path
-from typing import Any, Dict, Iterator, List
+from typing import Any, Iterator, TypeAlias
 
 import torch
 import torch.nn as nn
@@ -22,8 +22,8 @@ from train4all.utils import (
 __all__ = ["BaseTrainer"]
 
 
-ModuleSpec = str | nn.Module | List[str | nn.Module]
-MetricTable = Dict[str, Dict[str, List[float]]]
+ModuleSpec: TypeAlias = str | nn.Module | list[str | nn.Module]
+MetricTable: TypeAlias = dict[str, dict[str, list[float]]]
 
 
 def setup_required(func):
@@ -57,10 +57,10 @@ class BaseTrainer(abc.ABC):
 
         seed (int | None): Random seed.
 
-        run_dir (str | Path):
+        run_dir (Path | str):
             Output directory for this training run. Defaults to "run".
 
-        run_snapshot_dir (str | Path | None):
+        run_snapshot_dir (Path | str | None):
             Optional directory for storing a lightweight snapshot of this run.
             If None, snapshotting is disabled.
 
@@ -95,7 +95,7 @@ class BaseTrainer(abc.ABC):
 
         logger (UnifiedLogger | None):
             Optional external logger instance.
-            If None, a default `UnifiedLogger` is created automatically.
+            If None, a default `train4all.utils.UnifiedLogger` is created automatically.
     """
 
     def __init__(
@@ -103,24 +103,24 @@ class BaseTrainer(abc.ABC):
         self,
         num_epochs: int,
         batch_size: int | None = None,
-        learning_rate: float | Dict[str, float] = 1e-4,
+        learning_rate: float | dict[str, float] = 1e-4,
         device: str | None = None,
         seed: int | None = None,
 
         # --- Output / directories ---
-        run_dir: str | Path = "run",
-        run_snapshot_dir: str | Path | None = None,
+        run_dir: Path | str = "run",
+        run_snapshot_dir: Path | str | None = None,
 
         # --- Trainer policies ---
         patience: int | None = None,
         resume: bool = True,
         save_interval: int | None = None,
-        training_phases: List[str] | None = None,
+        training_phases: list[str] | None = None,
 
         # --- Logging / visualization ---
         record_step_metrics: bool = False,
-        metric_names_to_record: List[str] | None = None,
-        metric_names_to_display: List[str] | None = None,
+        metric_names_to_record: list[str] | None = None,
+        metric_names_to_display: list[str] | None = None,
         use_progress_bar: bool = True,
         keep_progress_bar: bool = False,
         key_width: int = 32,
@@ -144,9 +144,9 @@ class BaseTrainer(abc.ABC):
         self.run_dir = Path(run_dir)
         self.run_dir.mkdir(parents=True, exist_ok=True)
 
-        self.checkpoints_dir = self.run_dir / "checkpoints"
-        self.metrics_dir = self.run_dir / "metrics"
-        self.plots_dir = self.run_dir / "plots"
+        self._checkpoints_dir = self.run_dir / "checkpoints"
+        self._metrics_dir = self.run_dir / "metrics"
+        self._plots_dir = self.run_dir / "plots"
 
         self.run_snapshot_dir = Path(run_snapshot_dir) if run_snapshot_dir else None
 
@@ -167,27 +167,27 @@ class BaseTrainer(abc.ABC):
         self.logger = logger or self._create_default_logger()
 
         # --- Models / optimizer / scheduler ---
-        self.models: Dict[str, nn.Module] = {}
-        self.optimizer: Optimizer | None = None
-        self.scheduler: _LRScheduler | None = None
+        self._models: dict[str, nn.Module] = {}
+        self._optimizer: Optimizer | None = None
+        self._scheduler: _LRScheduler | None = None
 
         # --- Training state variables ---
-        self.current_epoch: int = 0
-        self.best_val_loss: float = float("inf")
-        self.best_val_epoch: int | None = None
-        self.epochs_no_improve: int = 0
+        self._current_epoch: int = 0
+        self._best_val_loss: float = float("inf")
+        self._best_val_epoch: int | None = None
+        self._epochs_no_improve: int = 0
 
         # --- Storage for metrics ---
-        self.step_metrics: MetricTable = {}
-        self.epoch_metrics: MetricTable = {}
+        self._step_metrics: MetricTable = {}
+        self._epoch_metrics: MetricTable = {}
 
         # --- Internal helpers ---
         self._is_setup_done: bool = False
-        self._cache: Dict[str, Any] = {}
+        self._cache: dict[str, Any] = {}
         self._checkpoint_excludes: set[str] = set()
-        self._checkpoint_extras: Dict[str, Any] = {}
+        self._checkpoint_extras: dict[str, Any] = {}
 
-        self._config: Dict[str, Any] = exclude_none({
+        self._config: dict[str, Any] = exclude_none({
             "num_epochs": num_epochs,
             "batch_size": batch_size,
             "learning_rate": learning_rate,
@@ -253,7 +253,7 @@ class BaseTrainer(abc.ABC):
         pass
 
     @abc.abstractmethod
-    def compute_metrics(self, batch: Any) -> Dict[str, float]:
+    def compute_metrics(self, batch: Any) -> dict[str, float]:
         """
         Compute evaluation metrics for the given batch.
         Cached intermediate results can be retrieved via get_cache().
@@ -275,7 +275,7 @@ class BaseTrainer(abc.ABC):
         """
         pass
 
-    # ----- Optional Hooks (intended to be overridden in subclass) -----
+    # ----- Optional Hooks -----
 
     def on_set_training_mode(self, training: bool) -> None:
         """Called when switching between training and evaluation modes."""
@@ -301,7 +301,7 @@ class BaseTrainer(abc.ABC):
         """Called at the beginning of each epoch."""
         pass
 
-    def on_epoch_end(self, epoch: int | None, loader: DataLoader, metrics: Dict[str, float], phase: str) -> None:
+    def on_epoch_end(self, epoch: int | None, loader: DataLoader, metrics: dict[str, float], phase: str) -> None:
         """Called at the end of each epoch."""
         pass
 
@@ -309,7 +309,7 @@ class BaseTrainer(abc.ABC):
         """Called at the beginning of each step."""
         pass
 
-    def on_step_end(self, step: int | None, batch: Any, metrics: Dict[str, float], phase: str) -> None:
+    def on_step_end(self, step: int | None, batch: Any, metrics: dict[str, float], phase: str) -> None:
         """Called at the end of each step."""
         pass
 
@@ -377,7 +377,7 @@ class BaseTrainer(abc.ABC):
         self,
         test_loader: DataLoader,
         use_best: bool = False,
-    ) -> Dict[str, float]:
+    ) -> dict[str, float]:
         """
         Evaluate the model on the test set.
 
@@ -391,7 +391,7 @@ class BaseTrainer(abc.ABC):
         if use_best:
             self._load_best_checkpoint()
 
-        self.print("\n[Test Epoch]\n")
+        self.print("[Test Epoch]\n")
         metrics = self._execute_epoch(test_loader, phase="test", training=False)
         self.print_metrics(metrics, phase="test")
 
@@ -432,7 +432,7 @@ class BaseTrainer(abc.ABC):
         phase: str,
         training: bool,
         epoch: int | None = None,
-    ) -> Dict[str, float]:
+    ) -> dict[str, float]:
         self._set_training_mode(training)
 
         self.on_epoch_start(epoch, loader, phase)
@@ -444,13 +444,13 @@ class BaseTrainer(abc.ABC):
 
         return metrics
     
-    def _run_epoch(self, loader: DataLoader, phase: str, training: bool) -> Dict[str, float]:
+    def _run_epoch(self, loader: DataLoader, phase: str, training: bool) -> dict[str, float]:
         iterator = loader
         if self.use_progress_bar:
             iterator = tqdm(loader, desc=f"{phase.capitalize()} Epoch", leave=self.keep_progress_bar)
 
         num_samples = 0
-        accumulated_metrics: Dict[str, float] = {}
+        accumulated_metrics: dict[str, float] = {}
 
         for step, batch in enumerate(iterator, 1):
             metrics = self._execute_step(batch, phase, training, step=step)
@@ -471,7 +471,7 @@ class BaseTrainer(abc.ABC):
         phase: str,
         step: int | None = None,
         print_metrics: bool = False,
-    ) -> Dict[str, float]:
+    ) -> dict[str, float]:
         """
         Run one step on a batch, recording metrics.
 
@@ -498,7 +498,7 @@ class BaseTrainer(abc.ABC):
         phase: str,
         training: bool,
         step: int | None = None,
-    ) -> Dict[str, float]:
+    ) -> dict[str, float]:
         batch = self._to_device(batch)
 
         self.on_step_start(step, batch, phase)
@@ -510,7 +510,7 @@ class BaseTrainer(abc.ABC):
         
         return metrics
     
-    def _run_step(self, batch: Any, training: bool) -> Dict[str, float]:
+    def _run_step(self, batch: Any, training: bool) -> dict[str, float]:
         with torch.set_grad_enabled(training):
             loss = self.compute_loss(batch)
             metrics = self.compute_metrics(batch)
@@ -521,11 +521,10 @@ class BaseTrainer(abc.ABC):
         metrics["loss"] = self._extract_valid_loss_value(loss)
         return metrics
     
-    # ----- Checkpoint Management -----
+    # ----- Checkpoint -----
 
     @setup_required
     def load_latest_checkpoint(self) -> None:
-        """Load the latest checkpoint."""
         self._load_latest_checkpoint()
     
     def _load_latest_checkpoint(self) -> None:
@@ -535,7 +534,6 @@ class BaseTrainer(abc.ABC):
 
     @setup_required
     def load_best_checkpoint(self) -> None:
-        """Load the best checkpoint."""
         self._load_best_checkpoint()
 
     def _load_best_checkpoint(self) -> None:
@@ -546,15 +544,15 @@ class BaseTrainer(abc.ABC):
     @setup_required
     def load_checkpoint(
         self,
-        path: str | Path,
+        path: Path | str,
         strict: bool = False,
-        key_map: Dict[str, str] | None = None,
+        key_map: dict[str, str] | None = None,
     ) -> None:
         """
         Load a full checkpoint.
 
         Args:
-            path (str | Path): Path to the checkpoint file.
+            path (Path | str): Path to the checkpoint file.
             strict (bool): Enforce exact key matching when loading the state dict.
             key_map (dict[str, str] | None): Optional mapping to rename keys.
         """
@@ -565,15 +563,15 @@ class BaseTrainer(abc.ABC):
     @setup_required
     def load_weights(
         self,
-        path: str | Path,
+        path: Path | str,
         strict: bool = False,
-        key_map: Dict[str, str] | None = None,
+        key_map: dict[str, str] | None = None,
     ) -> None:
         """
         Load only model weights from a checkpoint.
 
         Args:
-            path (str | Path): Path to the checkpoint file.
+            path (Path | str): Path to the checkpoint file.
             strict (bool): Enforce exact key matching when loading the state dict.
             key_map (dict[str, str] | None): Optional mapping to rename keys.
         """
@@ -583,9 +581,9 @@ class BaseTrainer(abc.ABC):
 
     def _load_checkpoint(
         self,
-        path: str | Path,
+        path: Path | str,
         strict: bool = False,
-        key_map: Dict[str, str] | None = None,
+        key_map: dict[str, str] | None = None,
         weights_only: bool = False,
     ) -> None:
         checkpoint = self._load_torch_file(path)
@@ -594,7 +592,7 @@ class BaseTrainer(abc.ABC):
 
         for name, state_dict in checkpoint.get("models", {}).items():
             self._load_state_dict(
-                obj=self.models.get(name),
+                obj=self._models.get(name),
                 name=name,
                 state_dict=state_dict,
                 is_model_weights=True,
@@ -604,41 +602,41 @@ class BaseTrainer(abc.ABC):
 
         if not weights_only:
             self._load_state_dict(
-                obj=self.optimizer,
+                obj=self._optimizer,
                 name="optimizer",
                 state_dict=checkpoint.get("optimizer"),
                 is_model_weights=False,
             )
 
             self._load_state_dict(
-                obj=self.scheduler,
+                obj=self._scheduler,
                 name="scheduler",
                 state_dict=checkpoint.get("scheduler"),
                 is_model_weights=False,
             )
 
             ts = checkpoint.get("training_state", {})
-            self.current_epoch = ts.get("current_epoch", self.current_epoch)
-            self.best_val_loss = ts.get("best_val_loss", self.best_val_loss)
-            self.best_val_epoch = ts.get("best_val_epoch", self.best_val_epoch)
-            self.epochs_no_improve = ts.get("epochs_no_improve", self.epochs_no_improve)
+            self._current_epoch = ts.get("current_epoch", self._current_epoch)
+            self._best_val_loss = ts.get("best_val_loss", self._best_val_loss)
+            self._best_val_epoch = ts.get("best_val_epoch", self._best_val_epoch)
+            self._epochs_no_improve = ts.get("epochs_no_improve", self._epochs_no_improve)
             self.print(f"  - {'training_state':<{self.key_width}}: restored")
 
             metrics = checkpoint.get("metrics", {})
-            self.step_metrics = metrics.get("step_metrics", self.step_metrics)
-            self.epoch_metrics = metrics.get("epoch_metrics", self.epoch_metrics)
+            self._step_metrics = metrics.get("step_metrics", self._step_metrics)
+            self._epoch_metrics = metrics.get("epoch_metrics", self._epoch_metrics)
             self.print(f"  - {'metrics':<{self.key_width}}: restored")
 
         self.print()
 
     def _load_state_dict(
         self,
-        obj: Any | None,
+        obj: nn.Module | Optimizer | _LRScheduler | None,
         name: str,
-        state_dict: Dict[str, Any] | None,
+        state_dict: dict[str, Any] | None,
         is_model_weights: bool = False,
         strict: bool = False,
-        key_map: Dict[str, str] | None = None,
+        key_map: dict[str, str] | None = None,
     ) -> None:
         if not obj or not state_dict:
             return
@@ -661,7 +659,7 @@ class BaseTrainer(abc.ABC):
         except Exception as e:
             self.print(f"{name}: failed to load ({e})", level="warn", indent=2)
     
-    def _load_torch_file(self, path: str | Path) -> Dict[str, Any] | None:
+    def _load_torch_file(self, path: Path | str) -> dict[str, Any] | None:
         try:
             return torch.load(path, map_location=self.device)
         except FileNotFoundError:
@@ -687,16 +685,16 @@ class BaseTrainer(abc.ABC):
 
         Behavior:
             - Saves all training checkpoints.
-            - Saves and exports epoch-wise metrics (plots and JSON) if any.
-            - Saves and exports step-wise metrics (plots and JSON) if any.
+            - Saves and exports epoch-level metrics (plots and JSON) if any.
+            - Saves and exports step-level metrics (plots and JSON) if any.
         """
         self._save_checkpoints()
 
-        if self.epoch_metrics:
+        if self._epoch_metrics:
             self.save_epoch_metric_plots(metric_names=metric_names, phases=phases)
             self.export_epoch_metrics(metric_names=metric_names, phases=phases)
 
-        if self.step_metrics:
+        if self._step_metrics:
             self.save_step_metric_plots(metric_names=metric_names, phases=phases)
             self.export_step_metrics(metric_names=metric_names, phases=phases)
     
@@ -713,7 +711,7 @@ class BaseTrainer(abc.ABC):
         self._save_checkpoints()
     
     def _save_checkpoints(self) -> None:
-        self.checkpoints_dir.mkdir(parents=True, exist_ok=True)
+        self._checkpoints_dir.mkdir(parents=True, exist_ok=True)
         checkpoint = self._get_checkpoint()
 
         try:
@@ -729,21 +727,21 @@ class BaseTrainer(abc.ABC):
                 self.print(f"🏆 Best checkpoint saved: {best_path.name}")
 
             # Periodic checkpoint
-            if self.save_interval and self.current_epoch % self.save_interval == 0:
-                epoch_path = self.get_checkpoint_path(f"epoch_{self.current_epoch}")
+            if self.save_interval and self._current_epoch % self.save_interval == 0:
+                epoch_path = self.get_checkpoint_path(f"epoch_{self._current_epoch}")
                 torch.save(checkpoint, epoch_path)
-                self.print(f"💾 Epoch {self.current_epoch} checkpoint saved: {epoch_path.name}")
+                self.print(f"💾 Epoch {self._current_epoch} checkpoint saved: {epoch_path.name}")
 
         except Exception as e:
             self.print(f"Failed to save checkpoint: {e}", level="warn")
 
     @setup_required
-    def save_checkpoint(self, path: str | Path) -> None:
+    def save_checkpoint(self, path: Path | str) -> None:
         """
         Save a checkpoint to a specific path.
 
         Args:
-            path (str | Path): Destination path to save the checkpoint.
+            path (Path | str): Destination path to save the checkpoint.
         """
         path = Path(path)
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -755,12 +753,12 @@ class BaseTrainer(abc.ABC):
             self.print(f"Failed to save checkpoint: {e}", level="warn")
 
     @setup_required
-    def save_weights(self, path: str | Path) -> None:
+    def save_weights(self, path: Path | str) -> None:
         """
         Save only the model weights to a specific path.
 
         Args:
-            path (str | Path): Destination path to save model weights.
+            path (Path | str): Destination path to save model weights.
         """
         path = Path(path)
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -771,23 +769,23 @@ class BaseTrainer(abc.ABC):
         except Exception as e:
             self.print(f"Failed to save model weights: {e}", level="warn")
     
-    def backup_checkpoint(self, path: str | Path) -> None:
+    def backup_checkpoint(self, path: Path | str) -> None:
         """
         Create a backup of a checkpoint file by appending `.bak` to the filename.
 
         Args:
-            path (str | Path): Path to the checkpoint file to backup.
+            path (Path | str): Path to the checkpoint file to backup.
         """
         path = Path(path)
         backup_path = path.with_name(path.name + ".bak")
         shutil.copyfile(path, backup_path)
         self.print(f"📦 Backup created: {backup_path.name}")
 
-    def _get_checkpoint(self, weights_only: bool = False) -> Dict[str, Any]:
+    def _get_checkpoint(self, weights_only: bool = False) -> dict[str, Any]:
         checkpoint = {
             "version": "1.0",
             "models": {
-                k: v.state_dict() for k, v in self.models.items()
+                k: v.state_dict() for k, v in self._models.items()
                 if k not in self._checkpoint_excludes
             },
             "extras": dict(self._checkpoint_extras),
@@ -795,23 +793,23 @@ class BaseTrainer(abc.ABC):
 
         if not weights_only:
             checkpoint.update({
-                "optimizer": self.optimizer.state_dict() if self.optimizer else None,
-                "scheduler": self.scheduler.state_dict() if self.scheduler else None,
+                "optimizer": self._optimizer.state_dict() if self._optimizer else None,
+                "scheduler": self._scheduler.state_dict() if self._scheduler else None,
                 "training_state": {
-                    "current_epoch": self.current_epoch,
-                    "best_val_loss": self.best_val_loss,
-                    "best_val_epoch": self.best_val_epoch,
-                    "epochs_no_improve": self.epochs_no_improve,
+                    "current_epoch": self._current_epoch,
+                    "best_val_loss": self._best_val_loss,
+                    "best_val_epoch": self._best_val_epoch,
+                    "epochs_no_improve": self._epochs_no_improve,
                 },
                 "metrics": {
-                    "step_metrics": self.step_metrics,
-                    "epoch_metrics": self.epoch_metrics,
+                    "step_metrics": self._step_metrics,
+                    "epoch_metrics": self._epoch_metrics,
                 },
             })
 
         return checkpoint
     
-    def exclude_from_checkpoint(self, names: str | List[str]) -> None:
+    def exclude_from_checkpoint(self, names: str | list[str]) -> None:
         """
         Exclude specified model(s) from checkpoint.
 
@@ -821,13 +819,13 @@ class BaseTrainer(abc.ABC):
         if isinstance(names, str):
             names = [names]
 
-        invalid = [n for n in names if n not in self.models]
+        invalid = [n for n in names if n not in self._models]
         if invalid:
             raise ValueError(f"Unregistered model(s) cannot be excluded: {invalid}")
 
         self._checkpoint_excludes.update(names)
 
-    def update_checkpoint_extras(self, extras: Dict[str, Any]) -> None:
+    def update_checkpoint_extras(self, extras: dict[str, Any]) -> None:
         """
         Update the checkpoint extras with new key-value pairs.
 
@@ -837,27 +835,23 @@ class BaseTrainer(abc.ABC):
         self._checkpoint_extras.update(extras)
 
     def has_latest_checkpoint(self) -> bool:
-        """Return True if the latest checkpoint exists."""
         return self.get_latest_checkpoint_path().exists()
 
     def has_best_checkpoint(self) -> bool:
-        """Return True if the best checkpoint exists."""
         return self.get_best_checkpoint_path().exists()
 
     def get_latest_checkpoint_path(self) -> Path:
-        """Return the path to the latest checkpoint file."""
         return self.get_checkpoint_path("latest")
 
     def get_best_checkpoint_path(self) -> Path:
-        """Return the path to the best checkpoint file."""
         return self.get_checkpoint_path("best")
     
     def get_checkpoint_path(self, name: str) -> Path:
-        return self.checkpoints_dir / f"{name}.pth"
+        return self._checkpoints_dir / f"{name}.pth"
 
-    # ----- Config Management -----
+    # ----- Config -----
 
-    def update_config(self, entries: Dict[str, Any]) -> None:
+    def update_config(self, entries: dict[str, Any]) -> None:
         """
         Update the trainer configuration with new entries.
 
@@ -882,9 +876,9 @@ class BaseTrainer(abc.ABC):
     def get_config_path(self) -> Path:
         return self.run_dir / "config.json"
     
-    # ----- Model / Optimizer / Scheduler Management -----
+    # ----- Model / Optimizer / Scheduler -----
     
-    def set_models(self, models: Dict[str, nn.Module], overwrite: bool = True, set_attr: bool = False) -> None:
+    def set_models(self, models: dict[str, nn.Module], overwrite: bool = True, set_attr: bool = False) -> None:
         """
         Set multiple models.
 
@@ -906,20 +900,17 @@ class BaseTrainer(abc.ABC):
             overwrite (bool): Whether to replace an existing entry.
             set_attr (bool): Whether to set the model as an attribute.
         """
-        if not overwrite and name in self.models:
+        if not overwrite and name in self._models:
             return
 
         model = model.to(self.device)
-        self.models[name] = model
+        self._models[name] = model
 
         if set_attr:
             setattr(self, name, model)
 
     def clear_models(self) -> None:
-        """
-        Clear all registered models.
-        """
-        self.models.clear()
+        self._models.clear()
 
     def set_optimizer(self, optimizer: Optimizer) -> None:
         """
@@ -928,13 +919,10 @@ class BaseTrainer(abc.ABC):
         Args:
             optimizer (torch.optim.Optimizer): Optimizer instance.
         """
-        self.optimizer = optimizer
+        self._optimizer = optimizer
 
     def clear_optimizer(self) -> None:
-        """
-        Clear the optimizer.
-        """
-        self.optimizer = None
+        self._optimizer = None
 
     def set_scheduler(self, scheduler: _LRScheduler) -> None:
         """
@@ -943,13 +931,10 @@ class BaseTrainer(abc.ABC):
         Args:
             scheduler (torch.optim.lr_scheduler._LRScheduler): Scheduler instance.
         """
-        self.scheduler = scheduler
+        self._scheduler = scheduler
 
     def clear_scheduler(self) -> None:
-        """
-        Clear the scheduler.
-        """
-        self.scheduler = None
+        self._scheduler = None
     
     def _to_device(self, x: Any) -> Any:
         if isinstance(x, torch.Tensor):
@@ -1009,7 +994,7 @@ class BaseTrainer(abc.ABC):
         self,
         targets: ModuleSpec | None = None,
         exclude_targets: ModuleSpec | None = None,
-    ) -> List[nn.Parameter]:
+    ) -> list[nn.Parameter]:
         """
         Return trainable parameters from the specified model(s).
 
@@ -1018,7 +1003,7 @@ class BaseTrainer(abc.ABC):
             exclude_targets (ModuleSpec | None): Models to exclude.
 
         Returns:
-            List[nn.Parameter]: Unique parameters with requires_grad=True.
+            list[nn.Parameter]: Unique parameters with requires_grad=True.
         """
         modules = self._resolve_modules(targets)
 
@@ -1027,7 +1012,7 @@ class BaseTrainer(abc.ABC):
             modules = [m for m in modules if m not in exclude]
 
         seen = set()
-        params: List[nn.Parameter] = []
+        params: list[nn.Parameter] = []
 
         for m in modules:
             for p in m.parameters():
@@ -1037,9 +1022,9 @@ class BaseTrainer(abc.ABC):
 
         return params
     
-    def _resolve_modules(self, targets: ModuleSpec | None) -> List[nn.Module]:
+    def _resolve_modules(self, targets: ModuleSpec | None) -> list[nn.Module]:
         if targets is None:
-            return list(self.models.values())
+            return list(self._models.values())
 
         if not isinstance(targets, list):
             targets = [targets]
@@ -1048,51 +1033,51 @@ class BaseTrainer(abc.ABC):
     
     def _resolve_module(self, target: str | nn.Module) -> nn.Module:
         if isinstance(target, str):
-            if target not in self.models:
+            if target not in self._models:
                 raise ValueError(f"Model '{target}' not registered")
-            return self.models[target]
+            return self._models[target]
         if isinstance(target, nn.Module):
             return target
         raise TypeError(f"Unsupported module target: {type(target)}")
     
     def _step_optimizer(self, loss: torch.Tensor) -> None:
-        if self.optimizer is None:
+        if self._optimizer is None:
             raise RuntimeError("Optimizer required for training.")
 
-        self.optimizer.zero_grad()
+        self._optimizer.zero_grad()
         loss.backward()
-        self.optimizer.step()
+        self._optimizer.step()
     
     def _step_scheduler(self, val_loss: float | None = None) -> None:
-        if self.scheduler is None:
+        if self._scheduler is None:
             return
 
-        if isinstance(self.scheduler, torch.optim.lr_scheduler.ReduceLROnPlateau):
+        if isinstance(self._scheduler, torch.optim.lr_scheduler.ReduceLROnPlateau):
             if val_loss is None:
                 raise ValueError(
                     "ReduceLROnPlateau scheduler requires a metric value (val_loss), "
                     "but val_loss is None. Provide val_loss or use a different scheduler."
                 )
-            self.scheduler.step(val_loss)
+            self._scheduler.step(val_loss)
             return
 
-        self.scheduler.step()
+        self._scheduler.step()
     
-    # ----- Metrics Management -----
+    # ----- Metrics -----
 
-    def _record_epoch_metrics(self, metrics: Dict[str, float], phase: str) -> None:
-        self._record_metrics(self.epoch_metrics, metrics, phase)
+    def _record_epoch_metrics(self, metrics: dict[str, float], phase: str) -> None:
+        self._record_metrics(self._epoch_metrics, metrics, phase)
 
-    def _record_step_metrics(self, metrics: Dict[str, float], phase: str) -> None:
+    def _record_step_metrics(self, metrics: dict[str, float], phase: str) -> None:
         if self.metric_names_to_record is not None:
             metrics = {k: v for k, v in metrics.items() if k in self.metric_names_to_record}
 
-        self._record_metrics(self.step_metrics, metrics, phase)
+        self._record_metrics(self._step_metrics, metrics, phase)
 
     @staticmethod
     def _record_metrics(
         target: MetricTable,
-        metrics: Dict[str, float],
+        metrics: dict[str, float],
         phase: str,
     ) -> None:
         for metric_name, value in metrics.items():
@@ -1101,11 +1086,11 @@ class BaseTrainer(abc.ABC):
     
     def get_epoch_metrics(
         self,
-        metric_names: List[str] | None = None,
-        phases: List[str] | None = None,
+        metric_names: list[str] | None = None,
+        phases: list[str] | None = None,
     ) -> MetricTable:
         """
-        Retrieve epoch-wise metrics filtered by metric names and phases.
+        Retrieve epoch-level metrics filtered by metric names and phases.
 
         Args:
             metric_names (list[str] | None): Metric names to retrieve. `None` returns all available metrics.
@@ -1114,15 +1099,15 @@ class BaseTrainer(abc.ABC):
         Returns:
             MetricTable: Filtered metric table.
         """
-        return self._filter_metrics(self.epoch_metrics, metric_names=metric_names, phases=phases)
+        return self._filter_metrics(self._epoch_metrics, metric_names=metric_names, phases=phases)
 
     def get_step_metrics(
         self,
-        metric_names: List[str] | None = None,
-        phases: List[str] | None = None,
+        metric_names: list[str] | None = None,
+        phases: list[str] | None = None,
     ) -> MetricTable:
         """
-        Retrieve step-wise metrics filtered by metric names and phases.
+        Retrieve step-level metrics filtered by metric names and phases.
 
         Args:
             metric_names (list[str] | None): Metric names to retrieve. `None` returns all available metrics.
@@ -1131,13 +1116,13 @@ class BaseTrainer(abc.ABC):
         Returns:
             MetricTable: Filtered metric table.
         """
-        return self._filter_metrics(self.step_metrics, metric_names=metric_names, phases=phases)
+        return self._filter_metrics(self._step_metrics, metric_names=metric_names, phases=phases)
     
     @staticmethod
     def _filter_metrics(
         metrics: MetricTable,
-        metric_names: List[str] | None = None,
-        phases: List[str] | None = None,
+        metric_names: list[str] | None = None,
+        phases: list[str] | None = None,
     ) -> MetricTable:
         return {
             metric_name: {
@@ -1155,13 +1140,13 @@ class BaseTrainer(abc.ABC):
 
         This resets `epoch_metrics` and `step_metrics` to empty states.
         """
-        self.epoch_metrics.clear()
-        self.step_metrics.clear()
+        self._epoch_metrics.clear()
+        self._step_metrics.clear()
     
     @staticmethod
     def _accumulate_metrics(
-        accumulated_metrics: Dict[str, float],
-        metrics: Dict[str, float],
+        accumulated_metrics: dict[str, float],
+        metrics: dict[str, float],
         weight: float,
     ) -> None:
         for metric_name, value in metrics.items():
@@ -1169,16 +1154,16 @@ class BaseTrainer(abc.ABC):
 
     @staticmethod
     def _compute_average_metrics(
-        accumulated_metrics: Dict[str, float],
+        accumulated_metrics: dict[str, float],
         num_samples: int,
-    ) -> Dict[str, float]:
+    ) -> dict[str, float]:
         if num_samples == 0:
             return {}
         return {k: v / num_samples for k, v in accumulated_metrics.items()}
     
-    def save_epoch_metric_plots(self, metric_names: List[str] | None = None, phases: List[str] | None = None) -> None:
+    def save_epoch_metric_plots(self, metric_names: list[str] | None = None, phases: list[str] | None = None) -> None:
         """
-        Save epoch-wise metric plots.
+        Save epoch-level metric plots.
 
         Args:
             metric_names (list[str] | None): Metric names to plot. `None` plots all metrics.
@@ -1188,15 +1173,13 @@ class BaseTrainer(abc.ABC):
         self._save_metric_plots(
             metrics=metrics,
             xlabel="epoch",
-            #title_prefix="epoch-wise",
-            #path_prefix="epoch",
             split_phases=False,
         )
-        self.print("📈 Epoch-wise metric curves saved.")
+        self.print("📈 Epoch-level metric curves saved.")
 
-    def save_step_metric_plots(self, metric_names: List[str] | None = None, phases: List[str] | None = None) -> None:
+    def save_step_metric_plots(self, metric_names: list[str] | None = None, phases: list[str] | None = None) -> None:
         """
-        Save step-wise metric plots.
+        Save step-level metric plots.
 
         Args:
             metric_names (list[str] | None): Metric names to plot. `None` plots all metrics.
@@ -1206,11 +1189,11 @@ class BaseTrainer(abc.ABC):
         self._save_metric_plots(
             metrics=metrics,
             xlabel="step",
-            title_prefix="step-wise",
+            title_prefix="step-level",
             path_prefix="step",
             split_phases=True,
         )
-        self.print("📈 Step-wise metric curves saved.")
+        self.print("📈 Step-level metric curves saved.")
 
     def _save_metric_plots(
         self,
@@ -1260,11 +1243,11 @@ class BaseTrainer(abc.ABC):
         prefix: str | None = None,
     ) -> Path:
         filename = get_metric_plot_filename(metric_name, phase=phase, prefix=prefix)
-        return self.plots_dir / filename
+        return self._plots_dir / filename
 
-    def export_epoch_metrics(self, metric_names: List[str] | None = None, phases: List[str] | None = None) -> None:
+    def export_epoch_metrics(self, metric_names: list[str] | None = None, phases: list[str] | None = None) -> Path:
         """
-        Export epoch-wise metrics as a JSON file.
+        Export epoch-level metrics as a JSON file.
 
         Args:
             metric_names (list[str] | None): Metric names to export. `None` exports all metrics.
@@ -1273,12 +1256,12 @@ class BaseTrainer(abc.ABC):
         metrics = self.get_epoch_metrics(metric_names=metric_names, phases=phases)
         path = self.get_epoch_metrics_path()
         self._export_metrics(metrics, path)
-        self.print(f"📄 Epoch-wise metrics exported: {path.name}")
+        self.print(f"📄 Epoch-level metrics exported: {path.name}")
         return path
     
-    def export_step_metrics(self, metric_names: List[str] | None = None, phases: List[str] | None = None) -> None:
+    def export_step_metrics(self, metric_names: list[str] | None = None, phases: list[str] | None = None) -> Path:
         """
-        Export step-wise metrics as a JSON file.
+        Export step-level metrics as a JSON file.
 
         Args:
             metric_names (list[str] | None): Metric names to export. `None` exports all metrics.
@@ -1287,10 +1270,10 @@ class BaseTrainer(abc.ABC):
         metrics = self.get_step_metrics(metric_names=metric_names, phases=phases)
         path = self.get_step_metrics_path()
         self._export_metrics(metrics, path)
-        self.print(f"📄 Step-wise metrics exported: {path.name}")
+        self.print(f"📄 Step-level metrics exported: {path.name}")
         return path
 
-    def _export_metrics(self, metrics: MetricTable, path: str | Path) -> None:
+    def _export_metrics(self, metrics: MetricTable, path: Path | str) -> None:
         path = Path(path)
         path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -1307,9 +1290,9 @@ class BaseTrainer(abc.ABC):
         return self.get_metrics_path("step_metrics")
 
     def get_metrics_path(self, name: str) -> Path:
-        return self.metrics_dir / f"{name}.json"
+        return self._metrics_dir / f"{name}.json"
 
-    # ----- Cache Management -----
+    # ----- Cache -----
 
     def set_cache(self, key: str, value: Any) -> None:
         """Store a value under the given key."""
@@ -1323,7 +1306,7 @@ class BaseTrainer(abc.ABC):
         """Remove all cached values."""
         self._cache.clear()
     
-    # ----- Logger Management -----
+    # ----- Logger -----
     
     def print_environment_summary(self) -> None:
         """Print a summary of the system and runtime environment for reproducible experiments."""
@@ -1432,7 +1415,7 @@ class BaseTrainer(abc.ABC):
     def print_model_summary(self) -> None:
         """Print a summary of all models, including trainable parameters."""
         tree = {}
-        for name, model in self.models.items():
+        for name, model in self._models.items():
             total = sum(p.numel() for p in model.parameters())
             trainable = sum(p.numel() for p in model.parameters() if p.requires_grad)
             status = f"{trainable:,}/{total:,} trainable" if trainable else "frozen"
@@ -1443,17 +1426,17 @@ class BaseTrainer(abc.ABC):
     def print_optimization_summary(self) -> None:
         """Print a summary of the optimizer and scheduler."""
         tree = {
-            "optimizer": self.optimizer.__class__.__name__ if self.optimizer else "-",
-            "scheduler": self.scheduler.__class__.__name__ if self.scheduler else "-",
+            "optimizer": self._optimizer.__class__.__name__ if self._optimizer else "-",
+            "scheduler": self._scheduler.__class__.__name__ if self._scheduler else "-",
         }
         self.print_dict_tree(tree, header="🔧 Optimization Summary")
     
-    def print_metrics(self, metrics: Dict[str, float], phase: str) -> None:
+    def print_metrics(self, metrics: dict[str, float], phase: str) -> None:
         """
         Print metrics for a given phase.
 
         Args:
-            metrics (dict[str, float]): Dict mapping metric names to their float values.
+            metrics (dict[str, float]): dict mapping metric names to their float values.
             phase (str): Phase name (e.g., 'train', 'val', 'test').
         """
         print_flat_dict_tree(
@@ -1471,23 +1454,23 @@ class BaseTrainer(abc.ABC):
         formatted_metrics = self._get_formatted_epoch_metrics()
 
         tree = {
-            "Completed epochs": self.current_epoch,
+            "Completed epochs": self._current_epoch,
             "Best val loss": (
-                f"{self.best_val_loss:.4f}  (epoch {self.best_val_epoch})"
-                if self.best_val_loss < float('inf') else "-"
+                f"{self._best_val_loss:.4f}  (epoch {self._best_val_epoch})"
+                if self._best_val_loss < float('inf') else "-"
             ),
             "No improvement epochs": (
-                self.epochs_no_improve
-                if self.epochs_no_improve is not None else "-"
+                self._epochs_no_improve
+                if self._epochs_no_improve is not None else "-"
             ),
             "Last epoch metrics": formatted_metrics or "-",
         }
 
         self.print_dict_tree(tree, header="📊 Training Status")
     
-    def _get_formatted_epoch_metrics(self) -> Dict[str, str]:
+    def _get_formatted_epoch_metrics(self) -> dict[str, str]:
         formatted = {}
-        for metric_name, phase_dict in self.epoch_metrics.items():
+        for metric_name, phase_dict in self._epoch_metrics.items():
             parts = []
             for phase, values in phase_dict.items():
                 if values:
@@ -1497,7 +1480,7 @@ class BaseTrainer(abc.ABC):
             formatted[metric_name] = "  ".join(parts) if parts else "N/A"
         return formatted
     
-    def _update_pbar(self, pbar: tqdm, metrics: Dict[str, float]) -> None:
+    def _update_pbar(self, pbar: tqdm, metrics: dict[str, float]) -> None:
         display_metrics = {
             k: f"{v:.4f}" for k, v in metrics.items()
             if k in (self.metric_names_to_display or [])
@@ -1511,7 +1494,7 @@ class BaseTrainer(abc.ABC):
     
     def print_dict_tree(
         self,
-        tree: Dict[str, Any],
+        tree: dict[str, Any],
         header: str | None = None,
         max_depth: int | None = None,
     ) -> None:
@@ -1616,21 +1599,21 @@ class BaseTrainer(abc.ABC):
 
         Automatically increments `current_epoch` and stops at `num_epochs`.
         """
-        while self.current_epoch < self.num_epochs:
-            self.current_epoch += 1
-            yield self.current_epoch, self.num_epochs
+        while self._current_epoch < self.num_epochs:
+            self._current_epoch += 1
+            yield self._current_epoch, self.num_epochs
     
-    # ----- Training Phase / Mode Management -----
+    # ----- Training Phase / Mode -----
 
     def _is_training_phase(self, phase: str) -> bool:
         return phase in self.training_phases
 
     def _set_training_mode(self, training: bool) -> None:
-        for model in self.models.values():
+        for model in self._models.values():
             model.train() if training else model.eval()
         self.on_set_training_mode(training)
     
-    # ----- Batch / Loss Management -----
+    # ----- Batch / Loss -----
     
     @staticmethod
     def _get_batch_size(batch: Any) -> int:
@@ -1648,18 +1631,18 @@ class BaseTrainer(abc.ABC):
             raise RuntimeError(f"Invalid loss value detected: {val}")
         return float(val)
     
-    # ----- Training Initialization / State Management -----
+    # ----- Training Initialization / State -----
     
     def reset_training_state(self) -> None:
         """Reset all training state variables."""
-        self.current_epoch = 0
-        self.best_val_loss = float("inf")
-        self.best_val_epoch = None
-        self.epochs_no_improve = 0
+        self._current_epoch = 0
+        self._best_val_loss = float("inf")
+        self._best_val_epoch = None
+        self._epochs_no_improve = 0
     
     def is_training_completed(self) -> bool:
         """Return True if the training has reached or exceeded the maximum number of epochs."""
-        return self.current_epoch >= self.num_epochs
+        return self._current_epoch >= self.num_epochs
     
     def finalize_train_epoch(self, val_loss: float | None = None) -> None:
         """
@@ -1680,23 +1663,23 @@ class BaseTrainer(abc.ABC):
         if val_loss is None:
             return
 
-        if val_loss < self.best_val_loss:
-            self.best_val_loss = val_loss
-            self.best_val_epoch = self.current_epoch
-            self.epochs_no_improve = 0
+        if val_loss < self._best_val_loss:
+            self._best_val_loss = val_loss
+            self._best_val_epoch = self._current_epoch
+            self._epochs_no_improve = 0
         else:
-            self.epochs_no_improve += 1
-            self.print(f"No improvement for {self.epochs_no_improve} epoch(s)", level="warn")
+            self._epochs_no_improve += 1
+            self.print(f"No improvement for {self._epochs_no_improve} epoch(s)", level="warn")
     
     def is_best_epoch(self) -> bool:
         """Return True if the current epoch matches the best validation epoch recorded so far."""
-        return self.current_epoch == self.best_val_epoch
+        return self._current_epoch == self._best_val_epoch
     
     def should_stop_early(self) -> bool:
         """Return True if early stopping condition has been met."""
-        return self.patience is not None and self.epochs_no_improve >= self.patience
+        return self.patience is not None and self._epochs_no_improve >= self.patience
     
-    # ----- Seed & Reproducibility Management -----
+    # ----- Seed & Reproducibility -----
 
     def _set_seed(self, seed: int) -> None:
         import random
@@ -1713,7 +1696,7 @@ class BaseTrainer(abc.ABC):
             cudnn.deterministic = True
             cudnn.benchmark = False
     
-    # ----- GPU management -----
+    # ----- GPU -----
 
     @staticmethod
     def _get_gpu_memory_info() -> tuple[int, int, int]:
@@ -1766,9 +1749,9 @@ class BaseTrainer(abc.ABC):
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
     
-    # ----- Others -----
+    # ----- Snapshot -----
     
-    def snapshot_run(self, exclude: List[str] | None = None) -> None:
+    def snapshot_run(self, exclude: list[str] | None = None) -> None:
         """
         Create a lightweight snapshot of this run in ``run_snapshot_dir``,
         excluding heavy artifacts such as checkpoints and caches.
