@@ -5,7 +5,7 @@
 ![Python](https://img.shields.io/badge/python-%E2%89%A53.12-blue)
 ![PyTorch](https://img.shields.io/badge/pytorch-%E2%89%A52.0-orange)
 ![License](https://img.shields.io/badge/license-MIT-green)
-![Version](https://img.shields.io/badge/version-0.1.0-informational)
+![Version](https://img.shields.io/badge/version-0.1.1-informational)
 
 **Implement three methods. Get a complete training loop.**
 
@@ -118,7 +118,7 @@ trainer.test(make_loader(10_000), use_best=True)
 | `num_epochs` | — | Total training epochs *(required)*. |
 | `batch_size` | `None` | Informational; accessible in `setup()` as `self.batch_size`. |
 | `learning_rate` | `1e-4` | Scalar or per-group dict; available as `self.learning_rate` in `setup()`. |
-| `device` | auto | `"cuda"`, `"mps"`, or `"cpu"`. Auto-detected when `None` — prefers CUDA, then MPS, then CPU. |
+| `device` | auto | `"cuda"`, `"cuda:1"`, `"mps"`, or `"cpu"`. Auto-detected when `None` — prefers CUDA, then MPS, then CPU. On a multi-GPU machine, pick a specific GPU with `"cuda:<index>"`. |
 | `seed` | `None` | Global random seed for Python, NumPy, and PyTorch. |
 | `run_dir` | `"run"` | Output directory for checkpoints, metrics, logs, and plots. |
 | `run_snapshot_dir` | `None` | Mirror directory for a lightweight copy of `run_dir` after each epoch. |

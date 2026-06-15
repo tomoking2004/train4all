@@ -70,8 +70,9 @@ class BaseTrainer(abc.ABC):
         num_epochs: Total number of training epochs.
         batch_size: Batch size (informational; not used internally).
         learning_rate: Learning rate(s) forwarded to the optimizer in ``setup()``.
-        device: Device string (e.g. ``"cuda"``, ``"mps"``, ``"cpu"``).
+        device: Device string (e.g. ``"cuda"``, ``"cuda:1"``, ``"mps"``, ``"cpu"``).
             Auto-detected when ``None`` — prefers CUDA, then MPS, then CPU.
+            On a multi-GPU machine, select a specific GPU with ``"cuda:<index>"``.
         seed: Random seed for reproducibility. Disabled if ``None``.
         run_dir: Output directory for checkpoints, metrics, and logs.
         run_snapshot_dir: Directory for a lightweight snapshot copy of ``run_dir``.
@@ -142,6 +143,10 @@ class BaseTrainer(abc.ABC):
             "mps"  if torch.backends.mps.is_available() else
             "cpu"
         ))
+        # On a multi-GPU machine, make the explicitly chosen GPU the process
+        # default too, so stray ``device="cuda"`` allocations land on it.
+        if self.device.type == "cuda" and self.device.index is not None:
+            torch.cuda.set_device(self.device)
         self.seed = seed
 
         self.run_dir = Path(run_dir)
@@ -1058,8 +1063,9 @@ class BaseTrainer(abc.ABC):
             "Disk":      f"{disk.free / 1e9:.2f} / {disk.total / 1e9:.2f} GB free",
         }
         if torch.cuda.is_available():
-            props = torch.cuda.get_device_properties(0)
-            info["GPU"]   = torch.cuda.get_device_name(0)
+            idx = self._cuda_index
+            props = torch.cuda.get_device_properties(idx)
+            info["GPU"]   = f"cuda:{idx} {torch.cuda.get_device_name(idx)}"
             info["VRAM"]  = f"{props.total_memory / 1e9:.2f} GB"
             info["CUDA"]  = torch.version.cuda
             info["cuDNN"] = str(torch.backends.cudnn.version())
@@ -1208,7 +1214,10 @@ class BaseTrainer(abc.ABC):
 
         try:
             result = subprocess.run(
-                ["nvidia-smi", "--query-gpu=temperature.gpu", "--format=csv,noheader,nounits"],
+                [
+                    "nvidia-smi", "-i", str(self._cuda_index),
+                    "--query-gpu=temperature.gpu", "--format=csv,noheader,nounits",
+                ],
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 text=True,
@@ -1806,6 +1815,13 @@ class BaseTrainer(abc.ABC):
 
     # ── Internal: Seed & GPU ──────────────────────────────────────────────────
 
+    @property
+    def _cuda_index(self) -> int:
+        """Index of the CUDA device the trainer reports on and probes."""
+        if self.device.type == "cuda" and self.device.index is not None:
+            return self.device.index
+        return torch.cuda.current_device() if torch.cuda.is_available() else 0
+
     def _set_seed(self, seed: int) -> None:
         random.seed(seed)
         np.random.seed(seed)
@@ -1841,7 +1857,7 @@ class BaseTrainer(abc.ABC):
                 import pynvml
                 pynvml.nvmlInit()
                 self._pynvml = pynvml
-                self._nvml_handle = pynvml.nvmlDeviceGetHandleByIndex(0)
+                self._nvml_handle = pynvml.nvmlDeviceGetHandleByIndex(self._cuda_index)
                 mem = pynvml.nvmlDeviceGetMemoryInfo(self._nvml_handle)
                 return mem.used >> 20, mem.total >> 20, mem.free >> 20
             except Exception:
@@ -1855,6 +1871,7 @@ class BaseTrainer(abc.ABC):
             output = subprocess.check_output(
                 [
                     "nvidia-smi",
+                    "-i", str(self._cuda_index),
                     "--query-gpu=memory.used,memory.total",
                     "--format=csv,noheader,nounits",
                 ],
