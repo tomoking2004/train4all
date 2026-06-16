@@ -92,6 +92,10 @@ class BaseTrainer(abc.ABC):
         use_dashboard: Enable the live web dashboard.
         dashboard_config: Dashboard appearance and behaviour settings.
             A default :class:`DashboardConfig` is used when ``None``.
+        amp: Automatic mixed precision. ``None`` (default) auto-enables bf16 on
+            CUDA and is a no-op elsewhere; an explicit ``True``/``"bf16"``/
+            ``"fp16"`` is warned about when the device is not CUDA, and
+            ``False`` forces the full-precision path used to reproduce a run.
     """
 
     # ── Directory / filename constants (override in subclasses if needed) ──────
@@ -134,6 +138,7 @@ class BaseTrainer(abc.ABC):
         logger: UnifiedLogger | None = None,
         use_dashboard: bool = False,
         dashboard_config: DashboardConfig | None = None,
+        amp: bool | str | None = None,
     ) -> None:
         self.num_epochs = num_epochs
         self.batch_size = batch_size
@@ -196,6 +201,8 @@ class BaseTrainer(abc.ABC):
         self._gpu_mem_cache: tuple[int, int, int] = (0, 0, 0)
         self._gpu_mem_cache_t: float = 0.0
 
+        self._init_amp(amp)
+
         self._config: dict[str, Any] = exclude_none({
             "num_epochs": num_epochs,
             "batch_size": batch_size,
@@ -204,6 +211,7 @@ class BaseTrainer(abc.ABC):
             "patience": patience,
             "save_interval": save_interval,
             "training_phases": self.training_phases,
+            "amp": amp,
         })
 
         if self.seed is not None:
@@ -1309,8 +1317,13 @@ class BaseTrainer(abc.ABC):
 
     def _run_step(self, batch: Any, training: bool) -> dict[str, float]:
         with torch.set_grad_enabled(training):
-            loss = self.compute_loss(batch)
-            metrics = self.compute_metrics(batch)
+            with torch.autocast(
+                self.device.type, dtype=self._amp_dtype, enabled=self._amp_enabled
+            ):
+                loss = self.compute_loss(batch)
+                metrics = self.compute_metrics(batch)
+            # Backward and the optimizer update run outside autocast — as AMP
+            # requires — while still under the grad-enabled context above.
             if training:
                 self._optimizer_step(loss)
         metrics["loss"] = self._validated_loss(loss)
@@ -1321,9 +1334,12 @@ class BaseTrainer(abc.ABC):
     def _optimizer_step(self, loss: torch.Tensor) -> None:
         if self._optimizer is None:
             raise RuntimeError("An optimizer is required for training.")
-        self._optimizer.zero_grad()
-        loss.backward()
-        self._optimizer.step()
+        # A disabled scaler (bf16 / no AMP) is a transparent passthrough, so
+        # this single path is correct at every precision.
+        self._optimizer.zero_grad(set_to_none=True)
+        self._scaler.scale(loss).backward()
+        self._scaler.step(self._optimizer)
+        self._scaler.update()
 
     def _scheduler_step(self, val_loss: float | None = None) -> None:
         if self._scheduler is None:
@@ -1434,6 +1450,12 @@ class BaseTrainer(abc.ABC):
             if sch_status is not None:
                 loaded["scheduler"] = sch_status
 
+            scaler_status = self._load_state_dict(
+                self._scaler, "scaler", checkpoint.get("scaler"),
+            )
+            if scaler_status is not None:
+                loaded["scaler"] = scaler_status
+
             ts = checkpoint.get("training_state", {})
             self._current_epoch     = ts.get("current_epoch",     self._current_epoch)
             self._best_val_loss     = ts.get("best_val_loss",     self._best_val_loss)
@@ -1483,7 +1505,7 @@ class BaseTrainer(abc.ABC):
 
     def _load_state_dict(
         self,
-        obj: Optimizer | _Scheduler | None,
+        obj: Optimizer | _Scheduler | torch.amp.GradScaler | None,
         name: str,
         state_dict: dict[str, Any] | None,
     ) -> str | None:
@@ -1522,6 +1544,7 @@ class BaseTrainer(abc.ABC):
             checkpoint.update({
                 "optimizer": self._optimizer.state_dict() if self._optimizer else None,
                 "scheduler": self._scheduler.state_dict() if self._scheduler else None,
+                "scaler": self._scaler.state_dict(),
                 "training_state": {
                     "current_epoch":     self._current_epoch,
                     "best_val_loss":     self._best_val_loss,
@@ -1821,6 +1844,38 @@ class BaseTrainer(abc.ABC):
         if self.device.type == "cuda" and self.device.index is not None:
             return self.device.index
         return torch.cuda.current_device() if torch.cuda.is_available() else 0
+
+    def _init_amp(self, amp: bool | str | None) -> None:
+        """Initialize automatic mixed precision from the ``amp`` argument.
+
+        Sets :attr:`_amp_enabled`, :attr:`_amp_dtype`, and :attr:`_scaler` — a
+        :class:`~torch.amp.GradScaler` kept live only for fp16, since bf16's
+        fp32-range exponent cannot underflow gradients and so needs no loss
+        scaling. A disabled scaler is a transparent passthrough, which keeps the
+        optimizer step uniform across precisions.
+        """
+        self.amp = amp
+        dtypes = {"bf16": torch.bfloat16, "fp16": torch.float16}
+        if isinstance(amp, str):
+            key = amp.lower()
+            if key not in dtypes:
+                raise ValueError(f"amp must be a bool, 'bf16', 'fp16', or None; got {amp!r}")
+            self._amp_dtype = dtypes[key]
+        else:
+            self._amp_dtype = torch.bfloat16
+
+        wants_amp = amp is None or bool(amp)          # None ⇒ auto-on
+        on_cuda = self.device.type == "cuda"
+        self._amp_enabled = wants_amp and on_cuda
+        if wants_amp and amp is not None and not on_cuda:
+            self.print(
+                f"amp={amp!r} was requested but device is '{self.device.type}'; "
+                "training in full precision (AMP only applies to CUDA).",
+                level="warn",
+            )
+        self._scaler = torch.amp.GradScaler(
+            enabled=self._amp_enabled and self._amp_dtype is torch.float16
+        )
 
     def _set_seed(self, seed: int) -> None:
         random.seed(seed)

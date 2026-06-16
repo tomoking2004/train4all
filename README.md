@@ -5,7 +5,7 @@
 ![Python](https://img.shields.io/badge/python-%E2%89%A53.12-blue)
 ![PyTorch](https://img.shields.io/badge/pytorch-%E2%89%A52.0-orange)
 ![License](https://img.shields.io/badge/license-MIT-green)
-![Version](https://img.shields.io/badge/version-0.1.1-informational)
+![Version](https://img.shields.io/badge/version-0.2.0-informational)
 
 **Implement three methods. Get a complete training loop.**
 
@@ -18,6 +18,7 @@ train4all is a minimal PyTorch training framework. Subclass `BaseTrainer`, imple
 **Features at a glance**
 
 - **Zero boilerplate** — one subclass, three methods, full training loop
+- **Mixed precision** — automatic bf16 AMP on CUDA by default for lower VRAM and faster steps; opt into `"fp16"` for older cards or disable with `amp=False`
 - **Automatic checkpointing** — `latest.pth` and `best.pth` saved after every epoch; periodic saves every N epochs
 - **Early stopping** — patience-based with automatic best-checkpoint tracking
 - **Live web dashboard** — a self-contained, dependency-free panel: progress gauge, live KPIs, per-step loss graph, per-metric charts, light & dark themes
@@ -136,6 +137,7 @@ trainer.test(make_loader(10_000), use_best=True)
 | `logger` | `None` | External `UnifiedLogger` instance; a default one is created if `None`. |
 | `use_dashboard` | `False` | Enable the live web dashboard. |
 | `dashboard_config` | `None` | Dashboard appearance and behaviour (`DashboardConfig`). |
+| `amp` | `None` | Automatic mixed precision. `None` auto-enables bf16 on CUDA (no-op on CPU/MPS); `True`/`"bf16"`/`"fp16"` requests it explicitly (warns if the device is not CUDA); `False` forces full precision. |
 
 ---
 
