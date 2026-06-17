@@ -12,7 +12,7 @@ except (AttributeError, ValueError):
 
 LogLevel: TypeAlias = Literal["info", "debug", "warn"]
 
-_SEP_PAD = 48  # separator width = key_width + _SEP_PAD
+_SEPARATOR_PAD = 48  # separator rule width = key_width + this pad
 
 
 def _render_tree(
@@ -50,7 +50,7 @@ def _print_header(
 ) -> None:
     if header is not None:
         printer(header)
-        printer(f" {'─' * (key_width + _SEP_PAD)}")
+        printer(f" {'─' * (key_width + _SEPARATOR_PAD)}")
 
 
 def print_flat_dict_tree(

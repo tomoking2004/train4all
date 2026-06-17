@@ -1,5 +1,5 @@
 from train4all.utils.dashboard import Dashboard, DashboardConfig
-from train4all.utils.dict_utils import MetricTable, exclude_none, replace_dict_keys
+from train4all.utils.dict_utils import MetricTable, replace_dict_keys
 from train4all.utils.file_utils import copy_dir, remove_dir
 from train4all.utils.log_utils import (
     LogLevel,
@@ -17,7 +17,6 @@ __all__ = [
     "Dashboard",
     "DashboardConfig",
     "MetricTable",
-    "exclude_none",
     "replace_dict_keys",
     "copy_dir",
     "remove_dir",

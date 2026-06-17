@@ -1,7 +1,7 @@
 import abc
 import gc
-import importlib
 import importlib.metadata
+import inspect
 import json
 import math
 import multiprocessing
@@ -32,7 +32,6 @@ from train4all.utils import (
     MetricTable,
     UnifiedLogger,
     copy_dir,
-    exclude_none,
     get_metric_plot_filename,
     get_metric_plot_title,
     print_dict_tree,
@@ -70,6 +69,28 @@ class BaseTrainer(abc.ABC):
         num_epochs: Total number of training epochs.
         batch_size: Batch size (informational; not used internally).
         learning_rate: Learning rate(s) forwarded to the optimizer in ``setup()``.
+            ``None`` (default) sets no rate — leave it unset for learning-rate-free
+            optimizers (e.g. Prodigy, D-Adaptation, Schedule-Free), which then
+            keep ``learning_rate`` out of the saved config.
+        max_grad_norm: Clip the global gradient norm to this value before each
+            optimizer step. Disabled when ``None``. Gradients are unscaled
+            first, so this is correct under fp16 AMP as well.
+        amp: Automatic mixed precision. ``None`` (default) auto-enables bf16 on
+            CUDA and is a no-op elsewhere; an explicit ``True``/``"bf16"``/
+            ``"fp16"`` is warned about when the device is not CUDA, and
+            ``False`` forces the full-precision path used to reproduce a run.
+        tf32: Allow TF32 for fp32 matmuls/convolutions on CUDA (Ampere+), and
+            enable the cuDNN autotuner. ``None`` (default) auto-enables it only
+            when ``seed`` is unset — speed when not reproducing, full precision
+            when you are. ``True``/``False`` force it on/off. CUDA-only; a no-op
+            on CPU/MPS. Independent of and complementary to ``amp``.
+        patience: Early-stopping patience (epochs without improvement). Disabled if ``None``.
+        monitor: Validation metric name that drives best-checkpoint selection and
+            early stopping. Defaults to ``"loss"``. The value is read from the
+            validation phase metrics each epoch.
+        monitor_mode: ``"min"`` to treat lower ``monitor`` values as better
+            (e.g. loss) or ``"max"`` for higher-is-better metrics (e.g. accuracy, F1).
+        training_phases: Phase names treated as training phases. Defaults to ``["train"]``.
         device: Device string (e.g. ``"cuda"``, ``"cuda:1"``, ``"mps"``, ``"cpu"``).
             Auto-detected when ``None`` — prefers CUDA, then MPS, then CPU.
             On a multi-GPU machine, select a specific GPU with ``"cuda:<index>"``.
@@ -77,10 +98,8 @@ class BaseTrainer(abc.ABC):
         run_dir: Output directory for checkpoints, metrics, and logs.
         run_snapshot_dir: Directory for a lightweight snapshot copy of ``run_dir``.
             Snapshotting is disabled when ``None``.
-        patience: Early-stopping patience (epochs without improvement). Disabled if ``None``.
         resume: Resume from the latest checkpoint at the start of training.
         save_interval: Save a periodic checkpoint every *N* epochs.
-        training_phases: Phase names treated as training phases. Defaults to ``["train"]``.
         record_step_metrics: Record per-step metrics during training phases.
         step_metric_names: Step metric names to record. ``None`` records all.
         pbar_metric_names: Metric names shown in the tqdm postfix. ``None`` hides all.
@@ -92,42 +111,56 @@ class BaseTrainer(abc.ABC):
         use_dashboard: Enable the live web dashboard.
         dashboard_config: Dashboard appearance and behaviour settings.
             A default :class:`DashboardConfig` is used when ``None``.
-        amp: Automatic mixed precision. ``None`` (default) auto-enables bf16 on
-            CUDA and is a no-op elsewhere; an explicit ``True``/``"bf16"``/
-            ``"fp16"`` is warned about when the device is not CUDA, and
-            ``False`` forces the full-precision path used to reproduce a run.
     """
 
-    # ── Directory / filename constants (override in subclasses if needed) ──────
+    # Class-level constants — override in a subclass to customize.
+
+    # ── Output layout: subdirectories of ``run_dir`` ──────────────────────────
     _CHECKPOINTS_DIRNAME: str = "checkpoints"
     _METRICS_DIRNAME: str     = "metrics"
     _PLOTS_DIRNAME: str       = "plots"
-    _LOG_FILENAME: str        = "log.txt"
-    _CONFIG_FILENAME: str     = "config.json"
-    _CHECKPOINT_VERSION: str  = "1.0"
-    _CKPT_LATEST: str         = "latest"
-    _CKPT_BEST: str           = "best"
-    _METRICS_EPOCH: str       = "epoch_metrics"
-    _METRICS_STEP: str        = "step_metrics"
-    _GPU_TEMP_WARN_C: int     = 85
-    _GPU_MEM_TTL_S: float     = 2.0  # cache nvidia-smi memory reads for this long
-    _SEPARATOR_PAD: int       = 48
+
+    # ── Output layout: file names ─────────────────────────────────────────────
+    _LOG_FILENAME: str    = "log.txt"
+    _CONFIG_FILENAME: str = "config.json"
+
+    # ── Checkpoint file stems and format version ──────────────────────────────
+    _CHECKPOINT_VERSION: str = "1.1"
+    _CHECKPOINT_LATEST: str  = "latest"
+    _CHECKPOINT_BEST: str    = "best"
+
+    # ── Metrics file stems ────────────────────────────────────────────────────
+    _METRICS_EPOCH: str = "epoch_metrics"
+    _METRICS_STEP: str  = "step_metrics"
+
+    # ── GPU probe tunables ────────────────────────────────────────────────────
+    _GPU_TEMP_WARN_C: int = 85   # warn above this GPU temperature (°C)
+    _GPU_MEM_TTL_S: float = 2.0  # cache nvidia-smi memory reads for this long
+
+    # ── Console / dashboard tunables ──────────────────────────────────────────
+    _SEPARATOR_PAD: int       = 48   # separator rule width = key_width + this pad
     _DASH_THROTTLE_S: float   = 0.5  # minimum seconds between dashboard step writes
     _DASH_EXTRA_WAIT_S: float = 0.5  # extra wait after dashboard finalize
 
     def __init__(
         self,
         num_epochs: int,
+        *,
         batch_size: int | None = None,
-        learning_rate: float | dict[str, float] = 1e-4,
+        learning_rate: float | dict[str, float] | None = None,
+        max_grad_norm: float | None = None,
+        amp: bool | str | None = None,
+        tf32: bool | None = None,
+        patience: int | None = None,
+        monitor: str = "loss",
+        monitor_mode: str = "min",
+        training_phases: list[str] | None = None,
         device: str | None = None,
         seed: int | None = None,
         run_dir: Path | str = "run",
         run_snapshot_dir: Path | str | None = None,
-        patience: int | None = None,
         resume: bool = True,
         save_interval: int | None = None,
-        training_phases: list[str] | None = None,
         record_step_metrics: bool = False,
         step_metric_names: list[str] | None = None,
         pbar_metric_names: list[str] | None = None,
@@ -138,11 +171,21 @@ class BaseTrainer(abc.ABC):
         logger: UnifiedLogger | None = None,
         use_dashboard: bool = False,
         dashboard_config: DashboardConfig | None = None,
-        amp: bool | str | None = None,
     ) -> None:
+        # ── Training / optimization ───────────────────────────────────────────
         self.num_epochs = num_epochs
         self.batch_size = batch_size
         self.learning_rate = learning_rate
+        self.max_grad_norm = max_grad_norm
+        # ``amp`` is wired below via ``_init_amp`` — it depends on ``device``.
+
+        # ── Early stopping / phases ───────────────────────────────────────────
+        self.patience = patience
+        self.monitor = monitor
+        self.monitor_mode = self._validate_mode(monitor_mode)
+        self.training_phases = training_phases or ["train"]
+
+        # ── Device / reproducibility ──────────────────────────────────────────
         self.device = torch.device(device or (
             "cuda" if torch.cuda.is_available() else
             "mps"  if torch.backends.mps.is_available() else
@@ -154,68 +197,82 @@ class BaseTrainer(abc.ABC):
             torch.cuda.set_device(self.device)
         self.seed = seed
 
+        # ── Persistence ───────────────────────────────────────────────────────
         self.run_dir = Path(run_dir)
         self.run_dir.mkdir(parents=True, exist_ok=True)
         self._checkpoints_dir = self.run_dir / self._CHECKPOINTS_DIRNAME
         self._metrics_dir     = self.run_dir / self._METRICS_DIRNAME
         self._plots_dir       = self.run_dir / self._PLOTS_DIRNAME
         self.run_snapshot_dir = Path(run_snapshot_dir) if run_snapshot_dir else None
-
-        self.patience = patience
         self.resume = resume
         self.save_interval = save_interval
-        self.training_phases = training_phases or ["train"]
 
+        # ── Metric recording ──────────────────────────────────────────────────
         self.record_step_metrics = record_step_metrics
         self.step_metric_names = step_metric_names
         self.pbar_metric_names = pbar_metric_names
+
+        # ── Display / logging ─────────────────────────────────────────────────
         self.use_progress_bar = use_progress_bar
         self.keep_progress_bar = keep_progress_bar
         self.key_width = key_width
         self.debug_mode = debug_mode
         self.logger = logger or self._create_default_logger()
 
+        # ── Internal: models / optimization objects ───────────────────────────
         self._models: dict[str, nn.Module] = {}
         self._optimizer: Optimizer | None = None
         self._scheduler: _Scheduler | None = None
 
+        # ── Internal: training state ──────────────────────────────────────────
         self._current_epoch: int = 0
-        self._best_val_loss: float = float("inf")
-        self._best_val_epoch: int | None = None
+        self._best_metric: float = self._worst_metric()
+        self._best_epoch: int | None = None
         self._epochs_no_improve: int = 0
 
+        # ── Internal: metrics ─────────────────────────────────────────────────
         self._epoch_metrics: MetricTable = {}
         self._step_metrics: MetricTable = {}
 
+        # ── Internal: misc state ──────────────────────────────────────────────
         self._setup_done: bool = False
         self._cache: dict[str, Any] = {}
         self._ckpt_excludes: set[str] = set()
         self._ckpt_extras: dict[str, Any] = {}
         self._last_dash_write: float = 0.0
 
-        # GPU-memory probe state — initialized lazily and reused across steps
-        # so the progress bar never pays an NVML init/shutdown per iteration.
+        # ── Internal: GPU-memory probe state ──────────────────────────────────
+        # Initialized lazily and reused across steps so the progress bar never
+        # pays an NVML init/shutdown per iteration.
         self._pynvml: Any = None
         self._nvml_handle: Any = None
         self._nvml_failed: bool = False
         self._gpu_mem_cache: tuple[int, int, int] = (0, 0, 0)
         self._gpu_mem_cache_t: float = 0.0
 
-        self._init_amp(amp)
+        # ── Derived initialization (depends on the attributes set above) ──────
+        self._init_amp(amp)  # needs ``device`` and ``logger``
 
-        self._config: dict[str, Any] = exclude_none({
+        # Reproducibility config — only the arguments the caller actually
+        # customized (anything left at its default is omitted), so the saved
+        # config is minimal and round-trips via ``MyTrainer(**config)``.
+        self._config: dict[str, Any] = self._customized_config({
             "num_epochs": num_epochs,
             "batch_size": batch_size,
             "learning_rate": learning_rate,
-            "seed": seed,
-            "patience": patience,
-            "save_interval": save_interval,
-            "training_phases": self.training_phases,
+            "max_grad_norm": max_grad_norm,
             "amp": amp,
+            "tf32": tf32,
+            "patience": patience,
+            "monitor": monitor,
+            "monitor_mode": monitor_mode,
+            "training_phases": training_phases,
+            "seed": seed,
         })
 
         if self.seed is not None:
-            self._set_seed(self.seed)
+            self._set_seed(self.seed)  # needs ``device``
+        self._init_tf32(tf32)  # needs ``device`` and ``seed``; runs after _set_seed
 
         cfg = dashboard_config or DashboardConfig()
         self._dashboard: Dashboard | None = (
@@ -295,11 +352,65 @@ class BaseTrainer(abc.ABC):
             training: ``True`` when switching to training mode, ``False`` for evaluation.
         """
 
+    def on_after_backward(self) -> None:
+        """
+        Called immediately after ``loss.backward()``, before gradient unscaling
+        and clipping.
+
+        Under fp16 AMP the gradients are still scaled by the loss-scale factor
+        at this point; use :meth:`on_before_optimizer_step` for the unscaled,
+        post-clip view.
+        """
+
+    def on_before_optimizer_step(self) -> None:
+        """
+        Called after backward (and gradient unscaling/clipping) and immediately
+        before the optimizer step, while gradients are populated.
+
+        Useful for gradient inspection, logging gradient norms, or applying a
+        custom clipping/regularization scheme beyond ``max_grad_norm``.
+        """
+
     def on_training_start(self) -> None:
         """Called once immediately before the main training loop begins."""
 
     def on_training_end(self) -> None:
         """Called once immediately after the main training loop ends."""
+
+    def on_exception(self, exc: BaseException) -> None:
+        """
+        Called when the training loop is aborted by an exception, including
+        ``KeyboardInterrupt`` (Ctrl-C). The exception is re-raised afterwards.
+
+        No checkpoint is saved automatically — a mid-epoch save would persist an
+        incomplete state. Override to react to the failure (custom logging,
+        alerting, or your own recovery logic).
+
+        Args:
+            exc: The exception that aborted training.
+        """
+
+    def on_save_checkpoint(self, checkpoint: dict[str, Any]) -> None:
+        """
+        Called while a full checkpoint dict is being built, before it is written.
+
+        Mutate ``checkpoint`` in place to persist custom state (the counterpart
+        of :meth:`on_load_checkpoint`). Not called for weights-only saves.
+
+        Args:
+            checkpoint: The checkpoint dict about to be saved.
+        """
+
+    def on_load_checkpoint(self, checkpoint: dict[str, Any]) -> None:
+        """
+        Called after a full checkpoint has been restored, with the raw dict.
+
+        Use it to read back anything stored via :meth:`on_save_checkpoint` or
+        ``update_checkpoint_extras()``. Not called for weights-only loads.
+
+        Args:
+            checkpoint: The checkpoint dict that was just loaded.
+        """
 
     def on_train_epoch_start(self, epoch: int) -> None:
         """
@@ -398,7 +509,8 @@ class BaseTrainer(abc.ABC):
         if self.patience is not None and val_loader is None:
             self.print(
                 "Early stopping is enabled (patience set) but no val_loader was "
-                "provided — it can never trigger without a validation loss.",
+                f"provided — it can never trigger without the '{self.monitor}' "
+                "metric from a validation phase.",
                 level="warn",
             )
 
@@ -410,33 +522,41 @@ class BaseTrainer(abc.ABC):
             self._dashboard.mark_started(start_time)
         self.on_training_start()
 
-        for epoch, max_epoch in self.epoch_iterator():
-            self.print(f"\n── Epoch {epoch} / {max_epoch}\n")
-            self.on_train_epoch_start(epoch)
+        # ``BaseException`` so a KeyboardInterrupt (Ctrl-C) or out-of-memory
+        # error also reaches ``on_exception`` before propagating. No checkpoint
+        # is written here: a mid-epoch save would persist an incomplete state,
+        # so recovery is left to the hook (which is a no-op by default).
+        try:
+            for epoch, max_epoch in self.epoch_iterator():
+                self.print(f"\n── Epoch {epoch} / {max_epoch}\n")
+                self.on_train_epoch_start(epoch)
 
-            train_metrics = self._execute_epoch(
-                train_loader, phase="train", training=True, epoch=epoch,
-            )
-            self.print_metrics(train_metrics, phase="train")
-
-            val_loss: float | None = None
-            if val_loader is not None:
-                val_metrics = self._execute_epoch(
-                    val_loader, phase="val", training=False, epoch=epoch,
+                train_metrics = self._execute_epoch(
+                    train_loader, phase="train", training=True, epoch=epoch,
                 )
-                self.print_metrics(val_metrics, phase="val")
-                val_loss = val_metrics.get("loss")
+                self.print_metrics(train_metrics, phase="train")
 
-            self.finalize_train_epoch(val_loss)
-            self.save_artifacts(phases=["train", "val"])
-            self._dash_update()
-            self.on_train_epoch_end(epoch)
+                monitor_value: float | None = None
+                if val_loader is not None:
+                    val_metrics = self._execute_epoch(
+                        val_loader, phase="val", training=False, epoch=epoch,
+                    )
+                    self.print_metrics(val_metrics, phase="val")
+                    monitor_value = val_metrics.get(self.monitor)
 
-            if self.should_stop_early():
-                self.print(f"⏹️  Early stopping triggered at epoch {epoch}.\n")
-                break
+                self.finalize_train_epoch(monitor_value)
+                self.save_artifacts(phases=["train", "val"])
+                self._dash_update()
+                self.on_train_epoch_end(epoch)
 
-            self.print()
+                if self.should_stop_early():
+                    self.print(f"⏹️  Early stopping triggered at epoch {epoch}.\n")
+                    break
+
+                self.print()
+        except BaseException as exc:
+            self.on_exception(exc)
+            raise
 
         self.on_training_end()
         duration = datetime.now() - start_time
@@ -467,6 +587,9 @@ class BaseTrainer(abc.ABC):
         metrics = self._execute_epoch(test_loader, phase="test", training=False)
         self.print_metrics(metrics, phase="test")
         self.print()
+        # Terminal operation, like the end of ``train()`` — release cached
+        # blocks now that no further epochs depend on allocator reuse.
+        self.clear_cuda_cache()
         return metrics
 
     @_require_setup
@@ -584,7 +707,7 @@ class BaseTrainer(abc.ABC):
             self._current_epoch += 1
             yield self._current_epoch, self.num_epochs
 
-    def finalize_train_epoch(self, val_loss: float | None = None) -> None:
+    def finalize_train_epoch(self, monitor_value: float | None = None) -> None:
         """
         Update early-stopping state and step the scheduler.
 
@@ -592,17 +715,17 @@ class BaseTrainer(abc.ABC):
         checkpoints, as checkpoint decisions depend on the updated state.
 
         Args:
-            val_loss: Validation loss for the epoch, or ``None`` if
-                validation was not performed.
+            monitor_value: The epoch's ``monitor`` metric from the validation
+                phase, or ``None`` if validation was not performed.
         """
-        self._update_early_stopping(val_loss)
-        self._scheduler_step(val_loss)
+        self._update_early_stopping(monitor_value)
+        self._scheduler_step(monitor_value)
 
     def reset_training_state(self) -> None:
-        """Reset the epoch counter, best-loss tracking, and early-stopping counters."""
+        """Reset the epoch counter, best-metric tracking, and early-stopping counters."""
         self._current_epoch = 0
-        self._best_val_loss = float("inf")
-        self._best_val_epoch = None
+        self._best_metric = self._worst_metric()
+        self._best_epoch = None
         self._epochs_no_improve = 0
 
     def is_training_completed(self) -> bool:
@@ -610,8 +733,8 @@ class BaseTrainer(abc.ABC):
         return self._current_epoch >= self.num_epochs
 
     def is_best_epoch(self) -> bool:
-        """Return ``True`` if the current epoch achieved the best validation loss."""
-        return self._current_epoch == self._best_val_epoch
+        """Return ``True`` if the current epoch achieved the best ``monitor`` value."""
+        return self._current_epoch == self._best_epoch
 
     def should_stop_early(self) -> bool:
         """Return ``True`` if the early-stopping patience has been exhausted."""
@@ -870,6 +993,16 @@ class BaseTrainer(abc.ABC):
         """
         self._ckpt_extras.update(extras)
 
+    def get_checkpoint_extras(self) -> dict[str, Any]:
+        """
+        Return a copy of the checkpoint ``extras`` dict.
+
+        Mirrors :meth:`update_checkpoint_extras`. After a full checkpoint is
+        loaded, this reflects the restored extras, so it is the symmetric way to
+        read back static metadata without overriding :meth:`on_load_checkpoint`.
+        """
+        return dict(self._ckpt_extras)
+
     def has_latest_checkpoint(self) -> bool:
         """Return ``True`` if ``latest.pth`` exists."""
         return self.get_latest_checkpoint_path().exists()
@@ -880,11 +1013,11 @@ class BaseTrainer(abc.ABC):
 
     def get_latest_checkpoint_path(self) -> Path:
         """Return the path to the latest checkpoint."""
-        return self.get_checkpoint_path(self._CKPT_LATEST)
+        return self.get_checkpoint_path(self._CHECKPOINT_LATEST)
 
     def get_best_checkpoint_path(self) -> Path:
         """Return the path to the best checkpoint."""
-        return self.get_checkpoint_path(self._CKPT_BEST)
+        return self.get_checkpoint_path(self._CHECKPOINT_BEST)
 
     def get_checkpoint_path(self, name: str) -> Path:
         """Return the path to ``{name}.pth`` in the checkpoints directory."""
@@ -1127,12 +1260,12 @@ class BaseTrainer(abc.ABC):
         self.print_dict_tree(tree, header="⚡ Optimization")
 
     def print_status(self) -> None:
-        """Print the current training state (epoch, best loss, and recent metrics)."""
+        """Print the current training state (epoch, best monitored value, and recent metrics)."""
         tree: dict[str, Any] = {
             "Completed epochs":   self._current_epoch,
-            "Best val loss":      (
-                f"{self._best_val_loss:.4f}  (epoch {self._best_val_epoch})"
-                if self._best_val_loss < float("inf") else "-"
+            f"Best val {self.monitor}": (
+                f"{self._best_metric:.4f}  (epoch {self._best_epoch})"
+                if self._best_epoch is not None else "-"
             ),
             "Stagnant epochs":    self._epochs_no_improve,
             "Last epoch metrics": self._format_epoch_metrics() or "-",
@@ -1269,7 +1402,10 @@ class BaseTrainer(abc.ABC):
         self._record_epoch_metrics(metrics, phase)
         self._dash_update()
         self.on_epoch_end(epoch, loader, metrics, phase)
-        self.clear_cuda_cache()
+        # NOTE: no per-epoch ``empty_cache()`` here — releasing cached blocks
+        # back to the driver every epoch forces the allocator to re-acquire
+        # them next epoch, which slows training. A single cleanup runs at the
+        # end of ``train()``; call ``clear_cuda_cache()`` manually if needed.
         return metrics
 
     def _run_epoch(self, loader: DataLoader, phase: str, training: bool) -> dict[str, float]:
@@ -1321,11 +1457,19 @@ class BaseTrainer(abc.ABC):
                 self.device.type, dtype=self._amp_dtype, enabled=self._amp_enabled
             ):
                 loss = self.compute_loss(batch)
-                metrics = self.compute_metrics(batch)
             # Backward and the optimizer update run outside autocast — as AMP
             # requires — while still under the grad-enabled context above.
             if training:
                 self._optimizer_step(loss)
+        # Metrics never need gradients. Computing them under no_grad avoids
+        # building and immediately discarding a graph on every step, which
+        # otherwise leaks both memory and time during training phases (where
+        # grad would still be enabled by the context above).
+        with torch.no_grad():
+            with torch.autocast(
+                self.device.type, dtype=self._amp_dtype, enabled=self._amp_enabled
+            ):
+                metrics = self.compute_metrics(batch)
         metrics["loss"] = self._validated_loss(loss)
         return metrics
 
@@ -1338,30 +1482,60 @@ class BaseTrainer(abc.ABC):
         # this single path is correct at every precision.
         self._optimizer.zero_grad(set_to_none=True)
         self._scaler.scale(loss).backward()
+        # Fires before unscaling/clipping. Under fp16 AMP the gradients here are
+        # still multiplied by the loss-scale factor (see ``on_before_optimizer_step``
+        # for the unscaled, post-clip view).
+        self.on_after_backward()
+        if self.max_grad_norm is not None:
+            # Gradients must be unscaled into "real" units before clipping;
+            # unscale_ is a no-op on a disabled scaler, so this stays correct
+            # at bf16 / full precision too.
+            self._scaler.unscale_(self._optimizer)
+            # Clip exactly the parameters the optimizer owns — the same set
+            # unscale_ just rescaled and step() will update. Tying the three
+            # together keeps the clipped norm correct under fp16 AMP even if
+            # the optimizer's parameters differ from get_trainable_params().
+            params = [p for group in self._optimizer.param_groups for p in group["params"]]
+            torch.nn.utils.clip_grad_norm_(params, self.max_grad_norm)
+        self.on_before_optimizer_step()
         self._scaler.step(self._optimizer)
         self._scaler.update()
 
-    def _scheduler_step(self, val_loss: float | None = None) -> None:
+    def _scheduler_step(self, monitor_value: float | None = None) -> None:
         if self._scheduler is None:
             return
         if isinstance(self._scheduler, ReduceLROnPlateau):
-            if val_loss is None:
+            if monitor_value is None:
                 raise ValueError(
-                    "ReduceLROnPlateau requires a val_loss value, but None was provided. "
-                    "Pass val_loss or use a different scheduler."
+                    f"ReduceLROnPlateau requires the '{self.monitor}' metric, but it "
+                    "was None (no validation this epoch, or the metric is missing). "
+                    "Provide a val_loader exposing it, or use a different scheduler."
                 )
-            self._scheduler.step(val_loss)
+            self._scheduler.step(monitor_value)
         else:
             self._scheduler.step()
 
     # ── Internal: Early Stopping / Mode ──────────────────────────────────────
 
-    def _update_early_stopping(self, val_loss: float | None) -> None:
-        if val_loss is None:
+    @staticmethod
+    def _validate_mode(monitor_mode: str) -> str:
+        if monitor_mode not in ("min", "max"):
+            raise ValueError(f"monitor_mode must be 'min' or 'max'; got {monitor_mode!r}")
+        return monitor_mode
+
+    def _worst_metric(self) -> float:
+        """The sentinel best-so-far value: any real metric beats it."""
+        return float("-inf") if self.monitor_mode == "max" else float("inf")
+
+    def _is_improvement(self, value: float, best: float) -> bool:
+        return value > best if self.monitor_mode == "max" else value < best
+
+    def _update_early_stopping(self, monitor_value: float | None) -> None:
+        if monitor_value is None:
             return
-        if val_loss < self._best_val_loss:
-            self._best_val_loss = val_loss
-            self._best_val_epoch = self._current_epoch
+        if self._is_improvement(monitor_value, self._best_metric):
+            self._best_metric = monitor_value
+            self._best_epoch = self._current_epoch
             self._epochs_no_improve = 0
         else:
             self._epochs_no_improve += 1
@@ -1457,9 +1631,11 @@ class BaseTrainer(abc.ABC):
                 loaded["scaler"] = scaler_status
 
             ts = checkpoint.get("training_state", {})
-            self._current_epoch     = ts.get("current_epoch",     self._current_epoch)
-            self._best_val_loss     = ts.get("best_val_loss",     self._best_val_loss)
-            self._best_val_epoch    = ts.get("best_val_epoch",    self._best_val_epoch)
+            self._current_epoch     = ts.get("current_epoch", self._current_epoch)
+            # ``best_metric``/``best_epoch`` are the current keys; fall back to the
+            # legacy ``best_val_loss``/``best_val_epoch`` so older checkpoints load.
+            self._best_metric       = ts.get("best_metric", ts.get("best_val_loss",  self._best_metric))
+            self._best_epoch        = ts.get("best_epoch",  ts.get("best_val_epoch", self._best_epoch))
             self._epochs_no_improve = ts.get("epochs_no_improve", self._epochs_no_improve)
             loaded["training_state"] = "restored"
 
@@ -1467,6 +1643,14 @@ class BaseTrainer(abc.ABC):
             self._epoch_metrics = saved_metrics.get("epoch_metrics", self._epoch_metrics)
             self._step_metrics  = saved_metrics.get("step_metrics",  self._step_metrics)
             loaded["metrics"] = "restored"
+
+            # Round-trip the extras saved by ``update_checkpoint_extras()`` and
+            # let subclasses restore any custom state from the raw checkpoint.
+            extras = checkpoint.get("extras")
+            if extras:
+                self._ckpt_extras.update(extras)
+                loaded["extras"] = "restored"
+            self.on_load_checkpoint(checkpoint)
 
         print_flat_dict_tree(
             data=loaded,
@@ -1547,8 +1731,8 @@ class BaseTrainer(abc.ABC):
                 "scaler": self._scaler.state_dict(),
                 "training_state": {
                     "current_epoch":     self._current_epoch,
-                    "best_val_loss":     self._best_val_loss,
-                    "best_val_epoch":    self._best_val_epoch,
+                    "best_metric":       self._best_metric,
+                    "best_epoch":        self._best_epoch,
                     "epochs_no_improve": self._epochs_no_improve,
                 },
                 "metrics": {
@@ -1556,6 +1740,9 @@ class BaseTrainer(abc.ABC):
                     "step_metrics":  self._step_metrics,
                 },
             })
+            # Let subclasses inject custom state into the full checkpoint dict;
+            # weights-only saves stay pure (models + extras) by design.
+            self.on_save_checkpoint(checkpoint)
         return checkpoint
 
     # ── Internal: Metrics ─────────────────────────────────────────────────────
@@ -1696,6 +1883,7 @@ class BaseTrainer(abc.ABC):
             env_info=self.get_env_info(),
             model_summary=self.get_model_summary(),
             training_phases=self.training_phases,
+            monitor=self.monitor,
             train_steps=self._loader_len(train_loader),
             val_steps=self._loader_len(val_loader),
         )
@@ -1739,8 +1927,8 @@ class BaseTrainer(abc.ABC):
             self._current_epoch,
             self.num_epochs,
             self._epoch_metrics,
-            self._best_val_loss,
-            self._best_val_epoch,
+            self._best_metric,
+            self._best_epoch,
             epochs_no_improve=self._epochs_no_improve,
             is_gradient_phase=self._is_training_phase(phase),
             step=step,
@@ -1773,8 +1961,8 @@ class BaseTrainer(abc.ABC):
             self._current_epoch,
             self.num_epochs,
             self._epoch_metrics,
-            self._best_val_loss,
-            self._best_val_epoch,
+            self._best_metric,
+            self._best_epoch,
             self._epochs_no_improve,
         )
         time.sleep(self._dashboard.poll_s + self._DASH_EXTRA_WAIT_S)
@@ -1876,6 +2064,55 @@ class BaseTrainer(abc.ABC):
         self._scaler = torch.amp.GradScaler(
             enabled=self._amp_enabled and self._amp_dtype is torch.float16
         )
+
+    def _init_tf32(self, tf32: bool | None) -> None:
+        """Configure TF32 and the cuDNN autotuner from the ``tf32`` argument.
+
+        ``None`` auto-enables both only when no ``seed`` is set, trading exact
+        reproducibility for speed. Must run *after* :meth:`_set_seed`, which sets
+        the deterministic / ``benchmark=False`` flags this may relax.
+        """
+        self.tf32 = tf32
+        if self.device.type != "cuda":
+            if tf32:
+                self.print(
+                    f"tf32={tf32!r} was requested but device is '{self.device.type}'; "
+                    "ignored (TF32 only applies to CUDA).",
+                    level="warn",
+                )
+            self._tf32_enabled = False
+            return
+
+        enabled = (self.seed is None) if tf32 is None else bool(tf32)
+        self._tf32_enabled = enabled
+        if enabled and self.seed is not None:
+            self.print(
+                "tf32 is enabled alongside a fixed seed; runs are only approximately "
+                "reproducible, since TF32 rounds fp32 matmul inputs to a 10-bit mantissa.",
+                level="warn",
+            )
+        torch.backends.cuda.matmul.allow_tf32 = enabled
+        torch.backends.cudnn.allow_tf32 = enabled
+        torch.set_float32_matmul_precision("high" if enabled else "highest")
+        # The cuDNN autotuner is nondeterministic and assumes fixed input sizes,
+        # so enable it only when not seeding (it also conflicts with the
+        # deterministic flags _set_seed applies for a fixed seed).
+        if enabled and self.seed is None:
+            torch.backends.cudnn.benchmark = True
+
+    def _customized_config(self, provided: dict[str, Any]) -> dict[str, Any]:
+        """Return only the entries whose value differs from the constructor's
+        default, so a saved config records exactly what the caller customized.
+
+        ``num_epochs`` (which has no default) is always kept.
+        """
+        params = inspect.signature(BaseTrainer.__init__).parameters
+        return {
+            key: value
+            for key, value in provided.items()
+            if params[key].default is inspect.Parameter.empty
+            or value != params[key].default
+        }
 
     def _set_seed(self, seed: int) -> None:
         random.seed(seed)

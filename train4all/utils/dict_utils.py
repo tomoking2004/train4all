@@ -5,11 +5,6 @@ MetricTable: TypeAlias = dict[str, dict[str, list[float]]]
 """Mapping of ``metric_name → phase → list[value]`` recorded over training."""
 
 
-def exclude_none(obj: Mapping[str, object]) -> dict[str, object]:
-    """Return a copy of *obj* with all ``None``-valued entries removed."""
-    return {k: v for k, v in obj.items() if v is not None}
-
-
 def replace_dict_keys(
     obj: object,
     name_map: Mapping[str, str],

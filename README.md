@@ -5,7 +5,7 @@
 ![Python](https://img.shields.io/badge/python-%E2%89%A53.12-blue)
 ![PyTorch](https://img.shields.io/badge/pytorch-%E2%89%A52.0-orange)
 ![License](https://img.shields.io/badge/license-MIT-green)
-![Version](https://img.shields.io/badge/version-0.2.0-informational)
+![Version](https://img.shields.io/badge/version-0.3.0-informational)
 
 **Implement three methods. Get a complete training loop.**
 
@@ -18,13 +18,13 @@ train4all is a minimal PyTorch training framework. Subclass `BaseTrainer`, imple
 **Features at a glance**
 
 - **Zero boilerplate** — one subclass, three methods, full training loop
-- **Mixed precision** — automatic bf16 AMP on CUDA by default for lower VRAM and faster steps; opt into `"fp16"` for older cards or disable with `amp=False`
+- **Mixed precision** — automatic bf16 AMP on CUDA by default for lower VRAM and faster steps; opt into `"fp16"` for older cards or disable with `amp=False`. TF32 + cuDNN autotuner switch on automatically for unseeded runs (`tf32`)
 - **Automatic checkpointing** — `latest.pth` and `best.pth` saved after every epoch; periodic saves every N epochs
-- **Early stopping** — patience-based with automatic best-checkpoint tracking
+- **Early stopping** — patience-based on any `monitor` metric (`min`/`max` mode), with automatic best-checkpoint tracking
 - **Live web dashboard** — a self-contained, dependency-free panel: progress gauge, live KPIs, per-step loss graph, per-metric charts, light & dark themes
 - **Flexible metrics** — epoch- and step-level recording, JSON export, matplotlib curve plots
 - **Snapshot sync** — mirror `run_dir` to any path for cloud-backed storage during long runs
-- **Lifecycle hooks** — 9 hook points to inject logic at any stage without subclassing the loop
+- **Lifecycle hooks** — 14 hook points to inject logic at any stage without subclassing the loop
 - **Step cache** — share tensors between `compute_loss` and `compute_metrics` with no extra forward pass
 
 ---
@@ -114,19 +114,26 @@ trainer.test(make_loader(10_000), use_best=True)
 
 ## Constructor Parameters
 
+All parameters except `num_epochs` are **keyword-only**, so order never matters and the table can be reordered freely. The saved config records **only the reproducibility-relevant arguments you actually customized** — anything left at its default is omitted — and unpacks straight back in: `MyTrainer(**trainer._config)` restores those settings (operational ones like `run_dir` and `device` fall back to their defaults).
+
 | Parameter | Default | Description |
 | :-- | :-- | :-- |
 | `num_epochs` | — | Total training epochs *(required)*. |
 | `batch_size` | `None` | Informational; accessible in `setup()` as `self.batch_size`. |
-| `learning_rate` | `1e-4` | Scalar or per-group dict; available as `self.learning_rate` in `setup()`. |
+| `learning_rate` | `None` | Scalar or per-group dict; available as `self.learning_rate` in `setup()`. Leave unset for learning-rate-free optimizers (e.g. Prodigy, D-Adaptation, Schedule-Free); **pass it explicitly for optimizers that need one** (e.g. Adam, SGD), since `self.learning_rate` is `None` until you do. |
+| `max_grad_norm` | `None` | Clip the global gradient norm to this value before each optimizer step. Disabled when `None`. Correct under fp16 AMP — gradients are unscaled first. |
+| `amp` | `None` | Automatic mixed precision. `None` auto-enables bf16 on CUDA (no-op on CPU/MPS); `True`/`"bf16"`/`"fp16"` requests it explicitly (warns if the device is not CUDA); `False` forces full precision. |
+| `tf32` | `None` | Allow TF32 fp32 matmuls/convolutions and the cuDNN autotuner on CUDA (Ampere+). `None` auto-enables it only when `seed` is unset (speed when not reproducing); `True`/`False` force it. CUDA-only; complementary to `amp`. |
+| `patience` | `None` | Early-stopping patience in epochs. Disabled when `None`. |
+| `monitor` | `"loss"` | Validation metric driving best-checkpoint selection and early stopping. |
+| `monitor_mode` | `"min"` | `"min"` (lower is better, e.g. loss) or `"max"` (higher is better, e.g. accuracy). |
+| `training_phases` | `["train"]` | Phase names that trigger gradient updates. |
 | `device` | auto | `"cuda"`, `"cuda:1"`, `"mps"`, or `"cpu"`. Auto-detected when `None` — prefers CUDA, then MPS, then CPU. On a multi-GPU machine, pick a specific GPU with `"cuda:<index>"`. |
 | `seed` | `None` | Global random seed for Python, NumPy, and PyTorch. |
 | `run_dir` | `"run"` | Output directory for checkpoints, metrics, logs, and plots. |
-| `run_snapshot_dir` | `None` | Mirror directory for a lightweight copy of `run_dir` after each epoch. |
-| `patience` | `None` | Early-stopping patience in epochs. Disabled when `None`. |
+| `run_snapshot_dir` | `None` | Mirror directory for a lightweight copy of `run_dir` via `snapshot_run()`. |
 | `resume` | `True` | Resume from `latest.pth` at the start of training. |
 | `save_interval` | `None` | Save a periodic checkpoint every N epochs. |
-| `training_phases` | `["train"]` | Phase names that trigger gradient updates. |
 | `record_step_metrics` | `False` | Record per-step metrics during training phases. |
 | `step_metric_names` | `None` | Subset of metric names to record at the step level. `None` records all. |
 | `pbar_metric_names` | `None` | Metric names shown in the tqdm postfix. `None` hides all metrics (GPU memory still shown on CUDA). |
@@ -137,7 +144,6 @@ trainer.test(make_loader(10_000), use_best=True)
 | `logger` | `None` | External `UnifiedLogger` instance; a default one is created if `None`. |
 | `use_dashboard` | `False` | Enable the live web dashboard. |
 | `dashboard_config` | `None` | Dashboard appearance and behaviour (`DashboardConfig`). |
-| `amp` | `None` | Automatic mixed precision. `None` auto-enables bf16 on CUDA (no-op on CPU/MPS); `True`/`"bf16"`/`"fp16"` requests it explicitly (warns if the device is not CUDA); `False` forces full precision. |
 
 ---
 
@@ -226,18 +232,37 @@ self.freeze(["encoder", self.head])
 Override any of these no-ops to inject logic at any stage of the loop:
 
 ```python
-def on_set_training_mode(self, training: bool) -> None: ...
+# Training run
 def on_training_start(self) -> None: ...
 def on_training_end(self) -> None: ...
+def on_exception(self, exc: BaseException) -> None: ...                # loop aborted; re-raised afterwards
+
+# Epoch
 def on_train_epoch_start(self, epoch: int) -> None: ...
 def on_train_epoch_end(self, epoch: int) -> None: ...
 def on_epoch_start(self, epoch: int | None, loader: DataLoader, phase: str) -> None: ...
 def on_epoch_end(self, epoch: int | None, loader: DataLoader, metrics: dict[str, float], phase: str) -> None: ...
+
+# Step
 def on_step_start(self, step: int | None, batch: Any, phase: str) -> None: ...
 def on_step_end(self, step: int | None, batch: Any, metrics: dict[str, float], phase: str) -> None: ...
+
+# Optimization
+def on_set_training_mode(self, training: bool) -> None: ...
+def on_after_backward(self) -> None: ...                              # before unscale/clip (fp16 grads still scaled)
+def on_before_optimizer_step(self) -> None: ...                       # after unscale/clip, before optimizer.step()
+
+# Checkpoint (full checkpoints only, not weights-only)
+def on_save_checkpoint(self, checkpoint: dict[str, Any]) -> None: ... # mutate dict to persist custom state
+def on_load_checkpoint(self, checkpoint: dict[str, Any]) -> None: ... # read it back after restore
 ```
 
-Two timing guarantees worth knowing: the step cache is cleared **before** `on_epoch_start` fires; epoch metrics for the completed phase are already recorded **before** `on_epoch_end` fires, so `get_epoch_metrics()` reflects the current epoch inside that hook.
+A few timing guarantees worth knowing:
+
+- The step cache is cleared **before** `on_epoch_start` fires.
+- Epoch metrics for the completed phase are already recorded **before** `on_epoch_end` fires, so `get_epoch_metrics()` reflects the current epoch inside that hook.
+- `on_exception` fires for any error — including `KeyboardInterrupt` (Ctrl-C) — and the exception is **re-raised** afterwards. No checkpoint is auto-saved, since a mid-epoch save would persist an incomplete state.
+- `on_save_checkpoint` / `on_load_checkpoint` fire only for **full** checkpoints; weights-only saves/loads stay pure (models + extras). They pair with `update_checkpoint_extras()` for round-tripping custom state across a resume.
 
 ---
 
@@ -287,6 +312,31 @@ path = trainer.get_checkpoint_path("epoch_10")            # checkpoints/epoch_10
 # Extras
 trainer.exclude_from_checkpoint("encoder")                # omit a model from future saves
 trainer.update_checkpoint_extras({"notes": "baseline"})   # embed custom data in the file
+extras = trainer.get_checkpoint_extras()                  # read it back (restored on load)
+```
+
+#### Persisting custom state: `extras` vs. hooks
+
+Two mechanisms embed your own data in a checkpoint. They are complementary — pick by whether the data is static metadata or dynamic state:
+
+| | `update_checkpoint_extras()` | `on_save_checkpoint()` / `on_load_checkpoint()` |
+| :-- | :-- | :-- |
+| Nature | **Declarative** — set the value once, when you know it | **Imperative** — runs on every save, capturing the current value |
+| Scope | Rides along with **full *and* weights-only** saves | **Full checkpoints only** |
+| Round-trip | Automatic (restored into `get_checkpoint_extras()`) | You write the paired save/load logic yourself |
+| Best for | Static metadata: git SHA, class names, normalization constants, dataset version | Dynamic state needing custom serialization: EMA weights, RNG state, replay buffers |
+
+```python
+def setup(self):
+    ...
+    self.update_checkpoint_extras({"class_names": CLASSES})   # static — set once
+
+def on_save_checkpoint(self, checkpoint):
+    checkpoint["ema"] = self.ema.state_dict()                 # dynamic — captured each save
+
+def on_load_checkpoint(self, checkpoint):
+    if "ema" in checkpoint:
+        self.ema.load_state_dict(checkpoint["ema"])
 ```
 
 ---
@@ -343,10 +393,10 @@ metrics = trainer.execute_step(batch,  phase="val",   print_metrics=True)
 
 ```python
 trainer.is_training_completed()      # True when current_epoch >= num_epochs
-trainer.is_best_epoch()              # True if this epoch set the best val loss
+trainer.is_best_epoch()              # True if this epoch set the best monitored value
 trainer.should_stop_early()          # True if patience is exhausted
 
-trainer.print_status()               # epoch counter, best loss, recent metrics
+trainer.print_status()               # epoch counter, best monitored value, recent metrics
 trainer.print_model_summary()        # model names and parameter counts
 trainer.print_env_summary()          # OS, CPU, RAM, GPU, Python, PyTorch versions
 trainer.print_optimization_summary() # optimizer and scheduler class names

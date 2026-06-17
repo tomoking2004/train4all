@@ -7,52 +7,47 @@ Architecture
   Dashboard        - writes a static HTML shell once on initialize(), then
                      writes a small JSON data file on every update(). Browser
                      JavaScript polls that JSON and patches the DOM in place —
-                     zero page reloads, continuous animation, step-level
-                     refresh.
+                     no page reloads, continuous animation, step-level refresh.
 
-The design is a quiet, Apple-like instrument panel: one centred column,
-frosted-glass cards floating over soft ambient colour, hairline rules,
-and a single state-driven accent. A large progress gauge anchors the page
-as the focal point — concentric rings (outer = overall run in the
-eight-colour spectrum, inner = the live phase's steps in the phase colour,
-turning gold once the run completes) with the overall percentage at its
-centre, epoch divider ticks and a gold ★ best-epoch marker ringing its rim. Run progress is strictly monotonic:
-training and validation steps both advance it (proportionally to their
-step counts), it never rewinds across a phase or epoch boundary, and it
-holds full once the run completes. The gauge is framed by two signal-rich
-flanks that fill the width either side of it instead of leaving it empty.
-One holds a uniform KPI grid — current metric, best validation loss,
-throughput, ETA, learning rate, and a GPU-memory cell whose usage bar
-turns red near capacity — all peer cells, no separate strip. The other
-carries the live step-loss graph alone: an auto-scaled trace of the active
-phase's recent per-step loss, drawn in that phase's colour (train blue,
-validation purple) and shown only while a step is running, in step with
-the throughput and ETA readouts. Instantaneous readings (current metric,
+Design
+──────
+A quiet, Apple-like instrument panel: one centred column, frosted-glass cards
+over soft ambient colour, hairline rules, and a single state-driven accent.
+
+A large progress gauge anchors the page — concentric rings (outer = overall
+run, inner = the live phase's steps, turning gold once the run completes) with
+the overall percentage at its centre, epoch divider ticks, and a gold ★
+best-epoch marker on its rim. Run progress is strictly monotonic: train and
+validation steps both advance it proportionally, it never rewinds across a
+phase or epoch boundary, and it holds full once the run completes.
+
+The gauge is flanked by a uniform KPI grid (current metric, best monitored
+value, throughput, ETA, learning rate, and a GPU-memory cell whose bar turns
+red near capacity) and the live step-loss graph (an auto-scaled trace of the
+active phase's recent per-step loss). Instantaneous readings (current metric,
 throughput, ETA, step graph) blank between steps; standing values (best
-validation loss, learning rate, GPU memory) persist.
+monitored value, learning rate, GPU memory) persist.
 
-Every metric gets its own hand-rolled SVG chart in a uniform two-column
-grid, the primary (loss) metric first. All charts show the same epoch-level
-history, so the look stays consistent — until the first epoch completes the
-panel simply holds an "awaiting" placeholder rather than a one-off per-step
-view. Charts are zero-dependency SVG with best-epoch markers, lowercase
-axis titles (``epoch`` · the metric name), a gold hover highlight + readout,
-per-chart log-scale toggles, and vector export; they render at the exact
-pixel width of their container (a ResizeObserver re-renders on reflow) and
-axis gridlines snap to nice values — powers of ten on the log scale. Every phase owns a fixed hue on a
-blue→violet→red spectrum — train blue, validation purple, test pink — so
-curves, legends, the live phase badge, the inner gauge ring, and the state
-accents always agree; blue means training, purple validating, red offline
-(a plateau keeps the training blue — the gold ★ carries that signal) and
-gold is reserved for excellence (best epoch, completed run). No green.
+Below, every metric gets its own zero-dependency SVG chart in a uniform
+two-column grid, the primary (loss) metric first. All charts share the same
+epoch-level history — until the first epoch completes they hold an "awaiting"
+placeholder rather than a one-off per-step view. Each has best-epoch markers,
+lowercase axis titles (``epoch`` · the metric name), a gold hover readout,
+a log-scale toggle, and vector export; they render at their container's exact
+pixel width (a ResizeObserver re-renders on reflow) and gridlines snap to nice
+values — powers of ten on the log scale.
 
-A fixed hairline across the top of the viewport mirrors overall run
-progress in the same spectrum. Configuration, environment, and model
-tables close the page — nested-dict config opens indented sub-groups; click
-any row to copy its value (a gold flash confirms). Light and dark
-themes are both first-class: the dashboard follows the system preference,
-and a header toggle (or the ``T`` key) persists the choice. A large
-gradient wordmark anchors the top-left beside a GitHub link.
+Every phase owns a fixed hue on a blue→violet→red spectrum — train blue,
+validation purple, test pink — so curves, legends, the phase badge, the inner
+gauge ring, and the state accents always agree. Red means offline (a plateau
+keeps the training blue — the gold ★ carries that signal); gold is reserved for
+excellence (best epoch, completed run). No green. A fixed hairline across the
+top of the viewport mirrors overall progress in the same spectrum.
+
+Configuration, environment, and model tables close the page — nested-dict
+config opens indented sub-groups; click any row to copy its value (a gold flash
+confirms). Light and dark themes are both first-class: the dashboard follows
+the system preference, and a header toggle (or the ``T`` key) persists it.
 
 Layout
 ────────────────────────────────────────────────────────────────────
@@ -160,6 +155,7 @@ class Dashboard:
         self._env_info: dict[str, Any] = {}
         self._model_summary: dict[str, Any] = {}
         self._training_phases: list[str] = ["train"]
+        self._monitor: str = "loss"
         self._train_steps: int = 0
         self._val_steps: int = 0
         self._server_port: int | None = None
@@ -211,6 +207,7 @@ class Dashboard:
         env_info: dict[str, Any] | None = None,
         model_summary: dict[str, Any] | None = None,
         training_phases: list[str] | None = None,
+        monitor: str = "loss",
         train_steps: int = 0,
         val_steps: int = 0,
     ) -> None:
@@ -228,6 +225,8 @@ class Dashboard:
                 the Model panel.
             training_phases: Phase names that trigger gradient updates, used to
                 drive the state-dependent accent, gauge, and captions correctly.
+            monitor: Name of the validation metric tracked for the best-value KPI,
+                used to label it (e.g. ``"accuracy"`` → "Best Val Accuracy").
             train_steps: Steps per training phase, used to make overall progress
                 advance proportionally and monotonically. ``0`` when unknown.
             val_steps: Steps per validation phase. ``0`` when there is no
@@ -240,6 +239,7 @@ class Dashboard:
         self._model_summary = model_summary or {}
         if training_phases is not None:
             self._training_phases = training_phases
+        self._monitor = monitor
         self._train_steps = train_steps
         self._val_steps = val_steps
 
@@ -276,8 +276,8 @@ class Dashboard:
         epoch: int,
         max_epoch: int,
         epoch_metrics: MetricTable | None = None,
-        best_val_loss: float = float("inf"),
-        best_val_epoch: int | None = None,
+        best_metric: float = float("inf"),
+        best_epoch: int | None = None,
         *,
         epochs_no_improve: int = 0,
         is_gradient_phase: bool = False,
@@ -299,9 +299,9 @@ class Dashboard:
             epoch:             Current epoch number (1-based).
             max_epoch:         Total number of training epochs.
             epoch_metrics:     Accumulated per-epoch metrics keyed by metric then phase.
-            best_val_loss:     Best validation loss recorded so far.
-            best_val_epoch:    Epoch that achieved ``best_val_loss``.
-            epochs_no_improve: Consecutive epochs without validation-loss improvement.
+            best_metric:       Best monitored validation value recorded so far.
+            best_epoch:        Epoch that achieved ``best_metric``.
+            epochs_no_improve: Consecutive epochs without an improvement.
             is_gradient_phase: Whether the active phase performs gradient updates.
             step:              Current step within the epoch (1-based).
             max_step:          Total number of steps in the epoch.
@@ -340,7 +340,7 @@ class Dashboard:
         self._write_data(
             epoch, max_epoch, step, max_step,
             epoch_metrics or {}, step_metrics, phase,
-            best_val_loss, best_val_epoch, epochs_no_improve, is_gradient_phase,
+            best_metric, best_epoch, epochs_no_improve, is_gradient_phase,
         )
 
     def finalize(
@@ -348,8 +348,8 @@ class Dashboard:
         epoch: int,
         max_epoch: int,
         epoch_metrics: MetricTable | None = None,
-        best_val_loss: float = float("inf"),
-        best_val_epoch: int | None = None,
+        best_metric: float = float("inf"),
+        best_epoch: int | None = None,
         epochs_no_improve: int = 0,
     ) -> None:
         """Write the final JSON snapshot and embed all data inline in the HTML.
@@ -363,9 +363,9 @@ class Dashboard:
             epoch:             Final epoch number reached.
             max_epoch:         Total number of training epochs.
             epoch_metrics:     All accumulated epoch metrics.
-            best_val_loss:     Best validation loss achieved.
-            best_val_epoch:    Epoch that achieved ``best_val_loss``.
-            epochs_no_improve: Consecutive epochs without validation-loss improvement.
+            best_metric:       Best monitored validation value achieved.
+            best_epoch:        Epoch that achieved ``best_metric``.
+            epochs_no_improve: Consecutive epochs without an improvement.
         """
         self._keepalive_stop.set()
         self._status = "completed"
@@ -373,7 +373,7 @@ class Dashboard:
         self._write_data(
             epoch, max_epoch, ms, ms,
             epoch_metrics or {}, None, "",
-            best_val_loss, best_val_epoch, epochs_no_improve,
+            best_metric, best_epoch, epochs_no_improve,
         )
         self._embed_data_in_html()
 
@@ -392,8 +392,8 @@ class Dashboard:
         epoch_metrics: MetricTable,
         step_metrics: dict[str, float] | None,
         phase: str,
-        best_val_loss: float,
-        best_val_epoch: int | None,
+        best_metric: float,
+        best_epoch: int | None,
         epochs_no_improve: int = 0,
         is_gradient_phase: bool = False,
     ) -> None:
@@ -411,8 +411,12 @@ class Dashboard:
             "last_phase":         phase,
             "training_phases":    self._training_phases,
             "is_gradient_phase":  is_gradient_phase,
-            "best_val_loss":      None if best_val_loss == float("inf") else best_val_loss,
-            "best_val_epoch":     best_val_epoch,
+            "monitor":            self._monitor,
+            # ``best_epoch is None`` is the single source of truth for "no best
+            # yet" — this avoids depending on the ±inf sentinel, which differs
+            # between min- and max-mode monitoring.
+            "best_metric":        None if best_epoch is None else best_metric,
+            "best_epoch":         best_epoch,
             "epochs_no_improve":  epochs_no_improve,
             "step_loss":          list(self._step_loss),
             "step_loss_phase":    self._step_phase,
@@ -996,7 +1000,7 @@ __T4A_CSS__
             <div class="k-sub" id="k-primary-sub">—</div>
           </div>
           <div class="kpi">
-            <span class="k-label">Best Val Loss</span>
+            <span class="k-label" id="k-best-label">Best Val</span>
             <div class="k-val"><span class="star" id="k-best-star" style="display:none">★</span><span id="k-best">—</span></div>
             <div class="k-sub" id="k-best-sub">—</div>
           </div>
@@ -1293,7 +1297,7 @@ document.addEventListener('DOMContentLoaded', function () {
   let gaugeSig = '';
   function updateGauge(d) {
     const marks = el('g-marks'); if (!marks) return;
-    const E = d.max_epoch || 0, best = d.best_val_epoch || 0, sig = E + ':' + best;
+    const E = d.max_epoch || 0, best = d.best_epoch || 0, sig = E + ':' + best;
     if (sig === gaugeSig) return;
     gaugeSig = sig;
     let s = '';
@@ -1316,7 +1320,7 @@ document.addEventListener('DOMContentLoaded', function () {
   /* The live metric, throughput and ETA are instantaneous readings: they show
      only while a step is actually running and blank to "—" otherwise — nothing
      lingers once the run is idle or finished (the full history lives in the
-     charts below). Best Val Loss is a standing record, so it persists. */
+     charts below). The best-metric KPI is a standing record, so it persists. */
   function updateKpis(d, primary, stepping) {
     if (primary && stepping) {
       setText('k-primary-label', titleCase(primary));
@@ -1326,11 +1330,12 @@ document.addEventListener('DOMContentLoaded', function () {
       setText('k-primary-label', primary ? titleCase(primary) : 'Metric');
       tween(el('k-primary'), undefined); setText('k-primary-sub', '—');
     }
-    if (d.best_val_loss != null) {
+    setText('k-best-label', 'Best Val ' + titleCase(d.monitor || 'loss'));
+    if (d.best_metric != null) {
       el('k-best-star').style.display = '';
-      tween(el('k-best'), d.best_val_loss, fmt);
+      tween(el('k-best'), d.best_metric, fmt);
       const ni = d.epochs_no_improve || 0;
-      setText('k-best-sub', 'epoch ' + d.best_val_epoch + (ni > 0 ? ' · ' + ni + ' since' : ''));
+      setText('k-best-sub', 'epoch ' + d.best_epoch + (ni > 0 ? ' · ' + ni + ' since' : ''));
     } else { el('k-best-star').style.display = 'none'; tween(el('k-best'), undefined); setText('k-best-sub', '—'); }
   }
 
@@ -1414,8 +1419,8 @@ document.addEventListener('DOMContentLoaded', function () {
     body.innerHTML = sparkSVG(vals, W, H, ph);
   }
 
-  /* Learning rate and GPU memory are standing telemetry — like Best Val Loss
-     they persist rather than blanking between steps. */
+  /* Learning rate and GPU memory are standing telemetry — like the best-metric
+     KPI they persist rather than blanking between steps. */
   function updateTelemetry(d) {
     const lr = d.learning_rate;
     setText('k-lr', fmtLR(lr));
@@ -1798,7 +1803,7 @@ document.addEventListener('DOMContentLoaded', function () {
     updateTelemetry(d);
     renderSpark(d);
 
-    bestEpochGlobal = d.best_val_epoch || 0;
+    bestEpochGlobal = d.best_epoch || 0;
     updateCharts(d.epoch_metrics || {}, primary);
 
     const liveV = primary !== null ? liveValue(d, primary) : undefined;
