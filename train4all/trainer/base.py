@@ -65,6 +65,9 @@ class BaseTrainer(abc.ABC):
         - ``compute_loss()``
         - ``compute_metrics()``
 
+    Optionally override ``compute_test_metrics()`` to report heavier, test-only
+    metrics during the final evaluation.
+
     Args:
         num_epochs: Total number of training epochs.
         batch_size: Batch size (informational; not used internally).
@@ -132,6 +135,12 @@ class BaseTrainer(abc.ABC):
     # ── Metrics file stems ────────────────────────────────────────────────────
     _METRICS_EPOCH: str = "epoch_metrics"
     _METRICS_STEP: str  = "step_metrics"
+
+    # ── Phase that carries the final-evaluation responsibility ────────────────
+    # The single phase whose per-step metrics come from ``compute_test_metrics``
+    # instead of ``compute_metrics``. Final evaluation runs once, so it owns the
+    # report and can compute heavier, report-only metrics.
+    _TEST_PHASE: str = "test"
 
     # ── GPU probe tunables ────────────────────────────────────────────────────
     _GPU_TEMP_WARN_C: int = 85   # warn above this GPU temperature (°C)
@@ -342,6 +351,35 @@ class BaseTrainer(abc.ABC):
                 return {"accuracy": acc}
         """
 
+    def compute_test_metrics(self, batch: Any) -> dict[str, float]:
+        """
+        Compute evaluation metrics for the final test phase.
+
+        Train and validation share one cheap, per-epoch metric path
+        (``compute_metrics``); the test phase runs once for final reporting, so
+        it gets its own override here for heavier, report-only metrics (AUC,
+        per-class F1, calibration, confusion matrices, …). The default simply
+        delegates to ``compute_metrics``, so test mirrors validation until you
+        override it.
+
+        Only the ``"test"`` phase routes here (see ``_TEST_PHASE``); every other
+        phase — train, val, and any custom phase — uses ``compute_metrics``.
+
+        Args:
+            batch: A batch of test data.
+
+        Returns:
+            Mapping of metric name to scalar value.
+
+        Example::
+
+            def compute_test_metrics(self, batch):
+                metrics = self.compute_metrics(batch)  # reuse the shared metrics
+                metrics["auc"] = roc_auc_score(...)    # plus report-only extras
+                return metrics
+        """
+        return self.compute_metrics(batch)
+
     # ── Lifecycle Hooks ───────────────────────────────────────────────────────
 
     def on_set_training_mode(self, training: bool) -> None:
@@ -477,7 +515,8 @@ class BaseTrainer(abc.ABC):
             step: 1-based step index within the current epoch, or ``None`` when called
                 outside the standard epoch loop.
             batch: The batch that was just processed.
-            metrics: Step metrics from ``compute_metrics()``, plus ``"loss"``.
+            metrics: Step metrics from ``compute_metrics()`` (or
+                ``compute_test_metrics()`` during the test phase), plus ``"loss"``.
             phase: Phase name (e.g. ``"train"``, ``"val"``).
         """
 
@@ -573,6 +612,9 @@ class BaseTrainer(abc.ABC):
         """
         Evaluate the model on the test set.
 
+        Per-step metrics come from ``compute_test_metrics`` (which defaults to
+        ``compute_metrics``), so override it to report heavier, test-only metrics.
+
         Args:
             test_loader: DataLoader for test data.
             use_best: Load the best checkpoint before evaluating.
@@ -584,8 +626,8 @@ class BaseTrainer(abc.ABC):
             self._load_best_checkpoint()
 
         self.print("── Test Epoch\n")
-        metrics = self._execute_epoch(test_loader, phase="test", training=False)
-        self.print_metrics(metrics, phase="test")
+        metrics = self._execute_epoch(test_loader, phase=self._TEST_PHASE, training=False)
+        self.print_metrics(metrics, phase=self._TEST_PHASE)
         self.print()
         # Terminal operation, like the end of ``train()`` — release cached
         # blocks now that no further epochs depend on allocator reuse.
@@ -1415,10 +1457,7 @@ class BaseTrainer(abc.ABC):
         )
         accumulated: dict[str, float] = {}
         num_samples = 0
-        try:
-            max_step = len(loader)
-        except TypeError:  # IterableDataset loaders have no length
-            max_step = 0
+        max_step = self._loader_len(loader)  # 0 for length-less IterableDataset loaders
         for step, batch in enumerate(pbar or loader, 1):
             batch_size = self._batch_size(batch)
             metrics = self._execute_step(batch, phase, training, step=step, max_step=max_step)
@@ -1439,7 +1478,7 @@ class BaseTrainer(abc.ABC):
     ) -> dict[str, float]:
         batch = self._to_device(batch)
         self.on_step_start(step, batch, phase)
-        metrics = self._run_step(batch, training)
+        metrics = self._run_step(batch, training, phase)
         # Throttle intermediate steps, but always write the final step of a
         # phase so the gauge's inner ring reaches 100% before the phase resets.
         self._dash_update(
@@ -1451,27 +1490,37 @@ class BaseTrainer(abc.ABC):
         self.on_step_end(step, batch, metrics, phase)
         return metrics
 
-    def _run_step(self, batch: Any, training: bool) -> dict[str, float]:
+    def _run_step(self, batch: Any, training: bool, phase: str) -> dict[str, float]:
         with torch.set_grad_enabled(training):
-            with torch.autocast(
-                self.device.type, dtype=self._amp_dtype, enabled=self._amp_enabled
-            ):
+            with self._autocast():
                 loss = self.compute_loss(batch)
             # Backward and the optimizer update run outside autocast — as AMP
             # requires — while still under the grad-enabled context above.
             if training:
                 self._optimizer_step(loss)
+        # The final test phase reports its own (possibly heavier) metrics; every
+        # other phase shares the cheap per-epoch ``compute_metrics`` path.
+        metric_fn = (
+            self.compute_test_metrics if phase == self._TEST_PHASE else self.compute_metrics
+        )
         # Metrics never need gradients. Computing them under no_grad avoids
         # building and immediately discarding a graph on every step, which
         # otherwise leaks both memory and time during training phases (where
         # grad would still be enabled by the context above).
-        with torch.no_grad():
-            with torch.autocast(
-                self.device.type, dtype=self._amp_dtype, enabled=self._amp_enabled
-            ):
-                metrics = self.compute_metrics(batch)
+        with torch.no_grad(), self._autocast():
+            metrics = metric_fn(batch)
         metrics["loss"] = self._validated_loss(loss)
         return metrics
+
+    def _autocast(self) -> torch.autocast:
+        """Autocast context for the configured AMP device/dtype.
+
+        A single source of truth for the two call sites in :meth:`_run_step`; a
+        transparent no-op when AMP is disabled (``enabled=False``).
+        """
+        return torch.autocast(
+            self.device.type, dtype=self._amp_dtype, enabled=self._amp_enabled,
+        )
 
     # ── Internal: Optimizer / Scheduler ──────────────────────────────────────
 
@@ -1561,7 +1610,7 @@ class BaseTrainer(abc.ABC):
             self.print(f"Failed to save {path.name}: {e}", level="warn")
 
     def _save_checkpoints(self) -> None:
-        self._checkpoints_dir.mkdir(parents=True, exist_ok=True)
+        # No explicit mkdir: ``_save_torch`` creates each destination's parent.
         checkpoint = self._build_checkpoint()
 
         latest_path = self.get_latest_checkpoint_path()
@@ -1612,23 +1661,16 @@ class BaseTrainer(abc.ABC):
                 loaded[name] = status
 
         if not weights_only:
-            opt_status = self._load_state_dict(
-                self._optimizer, "optimizer", checkpoint.get("optimizer"),
-            )
-            if opt_status is not None:
-                loaded["optimizer"] = opt_status
-
-            sch_status = self._load_state_dict(
-                self._scheduler, "scheduler", checkpoint.get("scheduler"),
-            )
-            if sch_status is not None:
-                loaded["scheduler"] = sch_status
-
-            scaler_status = self._load_state_dict(
-                self._scaler, "scaler", checkpoint.get("scaler"),
-            )
-            if scaler_status is not None:
-                loaded["scaler"] = scaler_status
+            # Optimizer, scheduler, and scaler share one load-and-record path;
+            # each key doubles as the checkpoint key and the status label.
+            for name, obj in {
+                "optimizer": self._optimizer,
+                "scheduler": self._scheduler,
+                "scaler":    self._scaler,
+            }.items():
+                status = self._load_state_dict(obj, name, checkpoint.get(name))
+                if status is not None:
+                    loaded[name] = status
 
             ts = checkpoint.get("training_state", {})
             self._current_epoch     = ts.get("current_epoch", self._current_epoch)
@@ -2039,40 +2081,49 @@ class BaseTrainer(abc.ABC):
         Sets :attr:`_amp_enabled`, :attr:`_amp_dtype`, and :attr:`_scaler` — a
         :class:`~torch.amp.GradScaler` kept live only for fp16, since bf16's
         fp32-range exponent cannot underflow gradients and so needs no loss
-        scaling. A disabled scaler is a transparent passthrough, which keeps the
+        scaling. A disabled scaler is a transparent passthrough, keeping the
         optimizer step uniform across precisions.
         """
         self.amp = amp
-        dtypes = {"bf16": torch.bfloat16, "fp16": torch.float16}
+
+        # Autocast dtype: an explicit "bf16"/"fp16" selects it; anything else
+        # (the ``None``/bool forms) defaults to bf16.
         if isinstance(amp, str):
-            key = amp.lower()
-            if key not in dtypes:
+            dtype = {"bf16": torch.bfloat16, "fp16": torch.float16}.get(amp.lower())
+            if dtype is None:
                 raise ValueError(f"amp must be a bool, 'bf16', 'fp16', or None; got {amp!r}")
-            self._amp_dtype = dtypes[key]
+            self._amp_dtype = dtype
         else:
             self._amp_dtype = torch.bfloat16
 
-        wants_amp = amp is None or bool(amp)          # None ⇒ auto-on
+        # Enabled unless explicitly disabled (``amp=False``), and only on CUDA;
+        # an explicit request on any other device is warned about and ignored.
         on_cuda = self.device.type == "cuda"
-        self._amp_enabled = wants_amp and on_cuda
-        if wants_amp and amp is not None and not on_cuda:
+        self._amp_enabled = amp is not False and on_cuda
+        if amp and not on_cuda:
             self.print(
                 f"amp={amp!r} was requested but device is '{self.device.type}'; "
                 "training in full precision (AMP only applies to CUDA).",
                 level="warn",
             )
+
+        # A GradScaler matters only for fp16; bf16 and full precision use a
+        # disabled, passthrough scaler.
         self._scaler = torch.amp.GradScaler(
-            enabled=self._amp_enabled and self._amp_dtype is torch.float16
+            enabled=self._amp_enabled and self._amp_dtype is torch.float16,
         )
 
     def _init_tf32(self, tf32: bool | None) -> None:
         """Configure TF32 and the cuDNN autotuner from the ``tf32`` argument.
 
         ``None`` auto-enables both only when no ``seed`` is set, trading exact
-        reproducibility for speed. Must run *after* :meth:`_set_seed`, which sets
-        the deterministic / ``benchmark=False`` flags this may relax.
+        reproducibility for speed. Must run *after* :meth:`_set_seed`, whose
+        deterministic / ``benchmark=False`` flags this may relax.
         """
         self.tf32 = tf32
+
+        # TF32 only applies to CUDA; elsewhere it's a no-op, and an explicit
+        # request that can't be honored is warned about and ignored.
         if self.device.type != "cuda":
             if tf32:
                 self.print(
@@ -2083,6 +2134,7 @@ class BaseTrainer(abc.ABC):
             self._tf32_enabled = False
             return
 
+        # ``None`` follows the seed (speed when not reproducing); a bool forces it.
         enabled = (self.seed is None) if tf32 is None else bool(tf32)
         self._tf32_enabled = enabled
         if enabled and self.seed is not None:
@@ -2128,7 +2180,7 @@ class BaseTrainer(abc.ABC):
             torch.mps.manual_seed(seed)
 
     def _gpu_memory_mib(self) -> tuple[int, int, int]:
-        """Return ``(used, total, free)`` GPU memory in MiB for device 0.
+        """Return ``(used, total, free)`` GPU memory in MiB for the selected device.
 
         NVML is initialized once and the device handle is reused on every
         subsequent call, so querying memory inside the per-step progress bar
@@ -2137,12 +2189,12 @@ class BaseTrainer(abc.ABC):
         is cached for :attr:`_GPU_MEM_TTL_S` seconds to avoid spawning a
         subprocess on every step.
         """
+        # Reuse the live NVML handle; drop it on error so the init path retries.
         if self._nvml_handle is not None:
             try:
-                mem = self._pynvml.nvmlDeviceGetMemoryInfo(self._nvml_handle)
-                return mem.used >> 20, mem.total >> 20, mem.free >> 20
+                return self._nvml_mib(self._nvml_handle)
             except Exception:
-                self._nvml_handle = None  # handle went stale — fall through
+                self._nvml_handle = None
 
         if not self._nvml_failed:
             try:
@@ -2150,10 +2202,9 @@ class BaseTrainer(abc.ABC):
                 pynvml.nvmlInit()
                 self._pynvml = pynvml
                 self._nvml_handle = pynvml.nvmlDeviceGetHandleByIndex(self._cuda_index)
-                mem = pynvml.nvmlDeviceGetMemoryInfo(self._nvml_handle)
-                return mem.used >> 20, mem.total >> 20, mem.free >> 20
+                return self._nvml_mib(self._nvml_handle)
             except Exception:
-                self._nvml_failed = True
+                self._nvml_failed = True  # NVML unavailable — use the smi fallback
 
         now = time.time()
         if now - self._gpu_mem_cache_t < self._GPU_MEM_TTL_S:
@@ -2168,10 +2219,14 @@ class BaseTrainer(abc.ABC):
                     "--format=csv,noheader,nounits",
                 ],
                 encoding="utf-8",
-            ).strip()
-            used_str, total_str = (x.strip() for x in output.split(","))
-            used, total = int(used_str), int(total_str)
+            )
+            used, total = (int(x) for x in output.split(","))  # int() tolerates whitespace
             self._gpu_mem_cache = (used, total, total - used)
         except Exception:
             self._gpu_mem_cache = (0, 0, 0)
         return self._gpu_mem_cache
+
+    def _nvml_mib(self, handle: Any) -> tuple[int, int, int]:
+        """Query an NVML device *handle*, returning ``(used, total, free)`` in MiB."""
+        mem = self._pynvml.nvmlDeviceGetMemoryInfo(handle)
+        return mem.used >> 20, mem.total >> 20, mem.free >> 20

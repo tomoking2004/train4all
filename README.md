@@ -5,7 +5,7 @@
 ![Python](https://img.shields.io/badge/python-%E2%89%A53.12-blue)
 ![PyTorch](https://img.shields.io/badge/pytorch-%E2%89%A52.0-orange)
 ![License](https://img.shields.io/badge/license-MIT-green)
-![Version](https://img.shields.io/badge/version-0.3.0-informational)
+![Version](https://img.shields.io/badge/version-0.4.0-informational)
 
 **Implement three methods. Get a complete training loop.**
 
@@ -155,7 +155,7 @@ Implement all three in your subclass:
 
 ```python
 def setup(self) -> None:
-    # Initialise and register models, optimizer, and scheduler.
+    # Initialize and register models, optimizer, and scheduler.
     # Called once before training or evaluation begins.
     ...
 
@@ -167,8 +167,22 @@ def compute_loss(self, batch: Any) -> torch.Tensor:
 def compute_metrics(self, batch: Any) -> dict[str, float]:
     # Return a flat dict of metric name → scalar value.
     # Called immediately after compute_loss; the step cache is populated.
+    # Used by train, val, and any custom phase.
     ...
 ```
+
+#### Optional: test-only metrics
+
+Train and validation share `compute_metrics` so the per-epoch path stays cheap. The **test** phase runs once for final reporting, so it has its own override for heavier, report-only metrics. The default delegates to `compute_metrics`, so test mirrors validation until you override it:
+
+```python
+def compute_test_metrics(self, batch: Any) -> dict[str, float]:
+    metrics = self.compute_metrics(batch)        # reuse the shared metrics
+    metrics["auc"] = roc_auc_score(...)          # plus report-only extras
+    return metrics
+```
+
+Only the `"test"` phase (used by `trainer.test()`) routes here; every other phase uses `compute_metrics`.
 
 ---
 
@@ -184,7 +198,7 @@ Run the full training loop. Calls `prepare_training()` first, then iterates epoc
 metrics: dict[str, float] = trainer.test(test_loader, use_best=True)
 ```
 
-Evaluate on a held-out test set. When `use_best=True`, loads `best.pth` before running — use this for final reporting after `train()` completes.
+Evaluate on a held-out test set. When `use_best=True`, loads `best.pth` before running — use this for final reporting after `train()` completes. Per-step metrics come from `compute_test_metrics` (see above), so override it to report test-only metrics.
 
 ---
 
@@ -219,7 +233,7 @@ params = self.get_trainable_params(targets="head", exclude_targets="encoder")
 ```python
 self.freeze("encoder")             # disable gradients
 self.unfreeze("encoder")           # re-enable gradients
-self.reset_parameters("head")      # re-initialise weights in place
+self.reset_parameters("head")      # re-initialize weights in place
 
 # Targets accept a name string, an nn.Module instance, or a list of either.
 self.freeze(["encoder", self.head])
@@ -373,7 +387,7 @@ for epoch, max_epoch in trainer.epoch_iterator():
     train_metrics = trainer.execute_epoch(train_loader, phase="train")
     val_metrics   = trainer.execute_epoch(val_loader,   phase="val")
 
-    trainer.finalize_train_epoch(val_loss=val_metrics.get("loss"))
+    trainer.finalize_train_epoch(val_metrics.get(trainer.monitor))
     trainer.save_artifacts()   # checkpoints + metric plots + JSON export
 
     if trainer.should_stop_early():
