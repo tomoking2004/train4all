@@ -66,7 +66,8 @@ class BaseTrainer(abc.ABC):
         - ``compute_metrics()``
 
     Optionally override ``compute_test_metrics()`` to report heavier, test-only
-    metrics during the final evaluation.
+    metrics during the final evaluation, or ``get_batch_weight()`` to change how
+    per-step metrics are weighted when averaged over an epoch.
 
     Args:
         num_epochs: Total number of training epochs.
@@ -78,6 +79,10 @@ class BaseTrainer(abc.ABC):
         max_grad_norm: Clip the global gradient norm to this value before each
             optimizer step. Disabled when ``None``. Gradients are unscaled
             first, so this is correct under fp16 AMP as well.
+        accumulation_steps: Accumulate gradients over this many steps before
+            each optimizer update, simulating a larger effective batch with no
+            extra memory. The loss is divided by this factor so the accumulated
+            gradients equal one full update. Defaults to ``1`` (update every step).
         amp: Automatic mixed precision. ``None`` (default) auto-enables bf16 on
             CUDA and is a no-op elsewhere; an explicit ``True``/``"bf16"``/
             ``"fp16"`` is warned about when the device is not CUDA, and
@@ -158,6 +163,7 @@ class BaseTrainer(abc.ABC):
         batch_size: int | None = None,
         learning_rate: float | dict[str, float] | None = None,
         max_grad_norm: float | None = None,
+        accumulation_steps: int = 1,
         amp: bool | str | None = None,
         tf32: bool | None = None,
         patience: int | None = None,
@@ -186,7 +192,9 @@ class BaseTrainer(abc.ABC):
         self.batch_size = batch_size
         self.learning_rate = learning_rate
         self.max_grad_norm = max_grad_norm
-        # ``amp`` is wired below via ``_init_amp`` — it depends on ``device``.
+        self.accumulation_steps = max(1, accumulation_steps)
+        self.amp = amp
+        self.tf32 = tf32
 
         # ── Early stopping / phases ───────────────────────────────────────────
         self.patience = patience
@@ -230,6 +238,7 @@ class BaseTrainer(abc.ABC):
 
         # ── Internal: models / optimization objects ───────────────────────────
         self._models: dict[str, nn.Module] = {}
+        self._compiled_models: set[str] = set()
         self._optimizer: Optimizer | None = None
         self._scheduler: _Scheduler | None = None
 
@@ -270,6 +279,7 @@ class BaseTrainer(abc.ABC):
             "batch_size": batch_size,
             "learning_rate": learning_rate,
             "max_grad_norm": max_grad_norm,
+            "accumulation_steps": accumulation_steps,
             "amp": amp,
             "tf32": tf32,
             "patience": patience,
@@ -379,6 +389,28 @@ class BaseTrainer(abc.ABC):
                 return metrics
         """
         return self.compute_metrics(batch)
+
+    def get_batch_weight(self, batch: Any) -> int:
+        """
+        Return the weight of ``batch`` for metric averaging.
+
+        Metrics are averaged as ``Σ(metric × weight) / Σweight`` across all
+        steps in an epoch; override to use a domain-specific weight instead of
+        the default sample count (e.g. token count for language models, where
+        sequences have variable length and loss is reported per token).
+
+        Args:
+            batch: The current batch.
+
+        Returns:
+            A positive integer weight.
+
+        Example::
+
+            def get_batch_weight(self, batch):
+                return int(batch["attention_mask"].sum())
+        """
+        return self._batch_size(batch)
 
     # ── Lifecycle Hooks ───────────────────────────────────────────────────────
 
@@ -538,11 +570,11 @@ class BaseTrainer(abc.ABC):
         self.prepare_training()
 
         if self.is_training_completed():
-            self.print("\n⏹️  Training already completed.\n\n")
+            self.print("\n⏹️  Training already completed.\n")
             return
 
         if self.should_stop_early():
-            self.print("\n⏹️  Early stopping condition already met. No training will run.\n\n")
+            self.print("\n⏹️  Early stopping condition already met. No training will run.\n")
             return
 
         if self.patience is not None and val_loader is None:
@@ -601,7 +633,7 @@ class BaseTrainer(abc.ABC):
         duration = datetime.now() - start_time
         self._finalize_dashboard()
         self.clear_cuda_cache()
-        self.print(f"\n✅ Training completed. Duration: {str(duration).split('.')[0]}\n\n")
+        self.print(f"\n✅ Training completed. Duration: {str(duration).split('.')[0]}\n")
 
     @_require_setup
     def test(
@@ -623,12 +655,12 @@ class BaseTrainer(abc.ABC):
             Mapping of metric name to value.
         """
         if use_best:
+            self.print()
             self._load_best_checkpoint()
 
-        self.print("── Test Epoch\n")
+        self.print("\n── Test Epoch\n")
         metrics = self._execute_epoch(test_loader, phase=self._TEST_PHASE, training=False)
         self.print_metrics(metrics, phase=self._TEST_PHASE)
-        self.print()
         # Terminal operation, like the end of ``train()`` — release cached
         # blocks now that no further epochs depend on allocator reuse.
         self.clear_cuda_cache()
@@ -674,7 +706,9 @@ class BaseTrainer(abc.ABC):
         Args:
             batch: Batch of data.
             phase: Phase name (e.g. ``"train"``).
-            step: Step number, used for hook callbacks.
+            step: 1-based step index for hook and dashboard bookkeeping. In a
+                training phase it also drives gradient accumulation — the
+                optimizer updates every ``accumulation_steps`` steps.
             print_metrics: Print computed metrics after the step.
 
         Returns:
@@ -789,6 +823,7 @@ class BaseTrainer(abc.ABC):
         models: dict[str, nn.Module],
         overwrite: bool = True,
         set_attr: bool = False,
+        compile: bool = False,
     ) -> None:
         """
         Register multiple models, moving each to the training device.
@@ -797,9 +832,10 @@ class BaseTrainer(abc.ABC):
             models: Mapping of name to model instance.
             overwrite: Replace any existing entry with the same name.
             set_attr: Also assign each model as ``self.<name>``.
+            compile: Compile each model in place with ``torch.compile()`` (PyTorch 2.0+).
         """
         for name, model in models.items():
-            self.set_model(name, model, overwrite=overwrite, set_attr=set_attr)
+            self.set_model(name, model, overwrite=overwrite, set_attr=set_attr, compile=compile)
 
     def set_model(
         self,
@@ -807,6 +843,7 @@ class BaseTrainer(abc.ABC):
         model: nn.Module,
         overwrite: bool = True,
         set_attr: bool = False,
+        compile: bool = False,
     ) -> None:
         """
         Register a single model, moving it to the training device.
@@ -816,16 +853,27 @@ class BaseTrainer(abc.ABC):
             model: Model instance.
             overwrite: Replace an existing entry with the same name.
             set_attr: Also assign the model as ``self.<name>``.
+            compile: Compile the model in place with ``torch.compile()``
+                (PyTorch 2.0+) for graph-level optimizations. The registered
+                module itself is compiled, so any reference to it runs the
+                optimized graph and checkpoints keep their original keys.
         """
         if not overwrite and name in self._models:
             return
-        self._models[name] = model.to(self.device)
+        model = model.to(self.device)
+        if compile:
+            model.compile()  # in place: keeps the same object and state-dict keys
+            self._compiled_models.add(name)
+        else:
+            self._compiled_models.discard(name)
+        self._models[name] = model
         if set_attr:
             setattr(self, name, model)
 
     def clear_models(self) -> None:
         """Remove all registered models."""
         self._models.clear()
+        self._compiled_models.clear()
 
     def set_optimizer(self, optimizer: Optimizer) -> None:
         """Set the optimizer."""
@@ -1281,24 +1329,27 @@ class BaseTrainer(abc.ABC):
                 total += n
                 if p.requires_grad:
                     trainable += n
+            suffix = " [compiled]" if name in self._compiled_models else ""
             if trainable == total:
-                result[name] = f"{total:,} params"
+                result[name] = f"{total:,} params{suffix}"
             elif trainable:
-                result[name] = f"{trainable:,} / {total:,} trainable"
+                result[name] = f"{trainable:,} / {total:,} trainable{suffix}"
             else:
-                result[name] = "frozen"
+                result[name] = f"frozen{suffix}"
         return result
 
     def print_model_summary(self) -> None:
         """Print the name and parameter counts of all registered models."""
-        self.print_dict_tree(self.get_model_summary(), header="🧩 Model")
+        self.print_dict_tree(self.get_model_summary(), header="🧠 Model")
 
     def print_optimization_summary(self) -> None:
-        """Print the optimizer and scheduler class names."""
-        tree = {
+        """Print the optimizer, scheduler, and gradient-accumulation settings."""
+        tree: dict[str, str] = {
             "Optimizer": self._optimizer.__class__.__name__ if self._optimizer else "-",
             "Scheduler": self._scheduler.__class__.__name__ if self._scheduler else "-",
         }
+        if self.accumulation_steps > 1:
+            tree["Grad accumulation"] = f"{self.accumulation_steps} steps"
         self.print_dict_tree(tree, header="⚡ Optimization")
 
     def print_status(self) -> None:
@@ -1312,7 +1363,7 @@ class BaseTrainer(abc.ABC):
             "Stagnant epochs":    self._epochs_no_improve,
             "Last epoch metrics": self._format_epoch_metrics() or "-",
         }
-        self.print_dict_tree(tree, header="📊 Status")
+        self.print_dict_tree(tree, header="📋 Status")
 
     def print_metrics(self, metrics: dict[str, float], phase: str) -> None:
         """
@@ -1451,22 +1502,27 @@ class BaseTrainer(abc.ABC):
         return metrics
 
     def _run_epoch(self, loader: DataLoader, phase: str, training: bool) -> dict[str, float]:
+        # Start each training epoch with a clean gradient state so any
+        # unstepped accumulation from the previous epoch (possible for
+        # IterableDataset loaders whose length is unknown) is discarded.
+        if training and self._optimizer is not None:
+            self._optimizer.zero_grad(set_to_none=True)
         pbar: tqdm | None = (
             tqdm(loader, desc=f"{phase.capitalize()} Epoch", leave=self.keep_progress_bar)
             if self.use_progress_bar else None
         )
         accumulated: dict[str, float] = {}
-        num_samples = 0
+        total_weight = 0
         max_step = self._loader_len(loader)  # 0 for length-less IterableDataset loaders
         for step, batch in enumerate(pbar or loader, 1):
-            batch_size = self._batch_size(batch)
+            weight = self.get_batch_weight(batch)
             metrics = self._execute_step(batch, phase, training, step=step, max_step=max_step)
-            self._accumulate_metrics(accumulated, metrics, batch_size)
-            num_samples += batch_size
+            self._accumulate_metrics(accumulated, metrics, weight)
+            total_weight += weight
             if pbar is not None:
                 self._update_pbar(pbar, metrics)
 
-        return self._average_metrics(accumulated, num_samples)
+        return self._average_metrics(accumulated, total_weight)
 
     def _execute_step(
         self,
@@ -1478,7 +1534,10 @@ class BaseTrainer(abc.ABC):
     ) -> dict[str, float]:
         batch = self._to_device(batch)
         self.on_step_start(step, batch, phase)
-        metrics = self._run_step(batch, training, phase)
+        # A training step fires the optimizer update only on the step that closes
+        # an accumulation cycle (every step when accumulation_steps == 1).
+        apply_update = training and self._is_accumulation_boundary(step or 0, max_step)
+        metrics = self._run_step(batch, phase, training, apply_update=apply_update)
         # Throttle intermediate steps, but always write the final step of a
         # phase so the gauge's inner ring reaches 100% before the phase resets.
         self._dash_update(
@@ -1490,14 +1549,16 @@ class BaseTrainer(abc.ABC):
         self.on_step_end(step, batch, metrics, phase)
         return metrics
 
-    def _run_step(self, batch: Any, training: bool, phase: str) -> dict[str, float]:
+    def _run_step(
+        self, batch: Any, phase: str, training: bool, *, apply_update: bool = True,
+    ) -> dict[str, float]:
         with torch.set_grad_enabled(training):
             with self._autocast():
                 loss = self.compute_loss(batch)
             # Backward and the optimizer update run outside autocast — as AMP
             # requires — while still under the grad-enabled context above.
             if training:
-                self._optimizer_step(loss)
+                self._optimizer_step(loss, apply_update=apply_update)
         # The final test phase reports its own (possibly heavier) metrics; every
         # other phase shares the cheap per-epoch ``compute_metrics`` path.
         metric_fn = (
@@ -1524,31 +1585,43 @@ class BaseTrainer(abc.ABC):
 
     # ── Internal: Optimizer / Scheduler ──────────────────────────────────────
 
-    def _optimizer_step(self, loss: torch.Tensor) -> None:
+    def _is_accumulation_boundary(self, step: int, max_step: int) -> bool:
+        """Whether the 1-based ``step`` ends a gradient-accumulation cycle and
+        should trigger an optimizer update.
+
+        Every ``accumulation_steps``-th step is a boundary, as is the final step
+        of a known-length epoch (``max_step``) — so a short tail cycle is flushed
+        rather than dropped. Length-unknown loaders (``max_step == 0``) cannot
+        detect their last step, so their tail is discarded by the next epoch's
+        opening ``zero_grad``.
+        """
+        return step % self.accumulation_steps == 0 or (max_step > 0 and step == max_step)
+
+    def _optimizer_step(self, loss: torch.Tensor, *, apply_update: bool = True) -> None:
         if self._optimizer is None:
             raise RuntimeError("An optimizer is required for training.")
-        # A disabled scaler (bf16 / no AMP) is a transparent passthrough, so
-        # this single path is correct at every precision.
-        self._optimizer.zero_grad(set_to_none=True)
-        self._scaler.scale(loss).backward()
-        # Fires before unscaling/clipping. Under fp16 AMP the gradients here are
-        # still multiplied by the loss-scale factor (see ``on_before_optimizer_step``
-        # for the unscaled, post-clip view).
+        # Divide the loss so that N accumulated backwards equal one full step;
+        # a disabled scaler (bf16 / no AMP) is a transparent passthrough.
+        self._scaler.scale(loss / self.accumulation_steps).backward()
+        # Fires on every backward, including mid-cycle accumulation steps.
+        # Under fp16 AMP the gradients are still scaled here; see
+        # ``on_before_optimizer_step`` for the unscaled, post-clip view.
         self.on_after_backward()
+        # Unscale / clip / step only when the accumulation cycle is complete.
+        if not apply_update:
+            return
         if self.max_grad_norm is not None:
             # Gradients must be unscaled into "real" units before clipping;
-            # unscale_ is a no-op on a disabled scaler, so this stays correct
-            # at bf16 / full precision too.
+            # unscale_ is a no-op on a disabled scaler.
             self._scaler.unscale_(self._optimizer)
             # Clip exactly the parameters the optimizer owns — the same set
-            # unscale_ just rescaled and step() will update. Tying the three
-            # together keeps the clipped norm correct under fp16 AMP even if
-            # the optimizer's parameters differ from get_trainable_params().
+            # unscale_ just rescaled and step() will update.
             params = [p for group in self._optimizer.param_groups for p in group["params"]]
             torch.nn.utils.clip_grad_norm_(params, self.max_grad_norm)
         self.on_before_optimizer_step()
         self._scaler.step(self._optimizer)
         self._scaler.update()
+        self._optimizer.zero_grad(set_to_none=True)
 
     def _scheduler_step(self, monitor_value: float | None = None) -> None:
         if self._scheduler is None:
@@ -1833,10 +1906,10 @@ class BaseTrainer(abc.ABC):
             accumulated[name] = accumulated.get(name, 0.0) + value * weight
 
     @staticmethod
-    def _average_metrics(accumulated: dict[str, float], num_samples: int) -> dict[str, float]:
-        if num_samples == 0:
+    def _average_metrics(accumulated: dict[str, float], total_weight: float) -> dict[str, float]:
+        if total_weight == 0:
             return {}
-        return {k: v / num_samples for k, v in accumulated.items()}
+        return {k: v / total_weight for k, v in accumulated.items()}
 
     def _save_metric_plots(
         self,
@@ -1929,7 +2002,7 @@ class BaseTrainer(abc.ABC):
             train_steps=self._loader_len(train_loader),
             val_steps=self._loader_len(val_loader),
         )
-        self.print(f"📊 Dashboard: {self._dashboard.url}\n")
+        self.print(f"🌐 Dashboard: {self._dashboard.url}\n")
 
     @staticmethod
     def _loader_len(loader: DataLoader | None) -> int:
@@ -2084,8 +2157,6 @@ class BaseTrainer(abc.ABC):
         scaling. A disabled scaler is a transparent passthrough, keeping the
         optimizer step uniform across precisions.
         """
-        self.amp = amp
-
         # Autocast dtype: an explicit "bf16"/"fp16" selects it; anything else
         # (the ``None``/bool forms) defaults to bf16.
         if isinstance(amp, str):
@@ -2120,8 +2191,6 @@ class BaseTrainer(abc.ABC):
         reproducibility for speed. Must run *after* :meth:`_set_seed`, whose
         deterministic / ``benchmark=False`` flags this may relax.
         """
-        self.tf32 = tf32
-
         # TF32 only applies to CUDA; elsewhere it's a no-op, and an explicit
         # request that can't be honored is warned about and ignored.
         if self.device.type != "cuda":

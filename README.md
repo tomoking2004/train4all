@@ -5,7 +5,7 @@
 ![Python](https://img.shields.io/badge/python-%E2%89%A53.12-blue)
 ![PyTorch](https://img.shields.io/badge/pytorch-%E2%89%A52.0-orange)
 ![License](https://img.shields.io/badge/license-MIT-green)
-![Version](https://img.shields.io/badge/version-0.4.0-informational)
+![Version](https://img.shields.io/badge/version-0.5.0-informational)
 
 **Implement three methods. Get a complete training loop.**
 
@@ -19,6 +19,7 @@ train4all is a minimal PyTorch training framework. Subclass `BaseTrainer`, imple
 
 - **Zero boilerplate** — one subclass, three methods, full training loop
 - **Mixed precision** — automatic bf16 AMP on CUDA by default for lower VRAM and faster steps; opt into `"fp16"` for older cards or disable with `amp=False`. TF32 + cuDNN autotuner switch on automatically for unseeded runs (`tf32`)
+- **Scale on small GPUs** — gradient accumulation (`accumulation_steps`) simulates a larger effective batch at no extra memory cost, and per-model `torch.compile` (`compile=True`) unlocks graph-level speedups
 - **Automatic checkpointing** — `latest.pth` and `best.pth` saved after every epoch; periodic saves every N epochs
 - **Early stopping** — patience-based on any `monitor` metric (`min`/`max` mode), with automatic best-checkpoint tracking
 - **Live web dashboard** — a self-contained, dependency-free panel: progress gauge, live KPIs, per-step loss graph, per-metric charts, light & dark themes
@@ -38,13 +39,16 @@ train4all is a minimal PyTorch training framework. Subclass `BaseTrainer`, imple
   - [Constructor Parameters](#constructor-parameters)
   - [API Reference](#api-reference)
     - [Abstract Methods](#abstract-methods)
+      - [Optional: test-only metrics](#optional-test-only-metrics)
     - [Training \& Evaluation](#training--evaluation)
     - [Setup Helpers](#setup-helpers)
     - [Model Management](#model-management)
     - [Lifecycle Hooks](#lifecycle-hooks)
     - [Step Cache](#step-cache)
     - [Checkpointing](#checkpointing)
+      - [Persisting custom state: `extras` vs. hooks](#persisting-custom-state-extras-vs-hooks)
     - [Metrics](#metrics)
+      - [Weighted averaging](#weighted-averaging)
     - [Custom Training Loop](#custom-training-loop)
     - [State Inspection](#state-inspection)
     - [Configuration](#configuration)
@@ -122,6 +126,7 @@ All parameters except `num_epochs` are **keyword-only**, so order never matters 
 | `batch_size` | `None` | Informational; accessible in `setup()` as `self.batch_size`. |
 | `learning_rate` | `None` | Scalar or per-group dict; available as `self.learning_rate` in `setup()`. Leave unset for learning-rate-free optimizers (e.g. Prodigy, D-Adaptation, Schedule-Free); **pass it explicitly for optimizers that need one** (e.g. Adam, SGD), since `self.learning_rate` is `None` until you do. |
 | `max_grad_norm` | `None` | Clip the global gradient norm to this value before each optimizer step. Disabled when `None`. Correct under fp16 AMP — gradients are unscaled first. |
+| `accumulation_steps` | `1` | Accumulate gradients over this many steps before each optimizer update, simulating a larger effective batch with no extra memory. The loss is rescaled so *N* micro-steps equal one full step; for known-length loaders the last partial cycle of each epoch is always flushed. |
 | `amp` | `None` | Automatic mixed precision. `None` auto-enables bf16 on CUDA (no-op on CPU/MPS); `True`/`"bf16"`/`"fp16"` requests it explicitly (warns if the device is not CUDA); `False` forces full precision. |
 | `tf32` | `None` | Allow TF32 fp32 matmuls/convolutions and the cuDNN autotuner on CUDA (Ampere+). `None` auto-enables it only when `seed` is unset (speed when not reproducing); `True`/`False` force it. CUDA-only; complementary to `amp`. |
 | `patience` | `None` | Early-stopping patience in epochs. Disabled when `None`. |
@@ -210,6 +215,11 @@ Intended for use inside your `setup()` implementation:
 # Register models and move them to the training device.
 self.set_models({"encoder": enc, "head": head})    # multiple at once
 self.set_model("backbone", backbone)                # one at a time
+
+# Optionally compile a model in place for graph-level speedups (PyTorch 2.0+).
+# The registered module is compiled, so your compute_loss runs the optimized
+# graph and checkpoints keep their original keys.
+self.set_model("decoder", decoder, compile=True)
 
 # Set the optimizer.
 optimizer = torch.optim.AdamW(self.get_trainable_params(), lr=self.learning_rate)
@@ -374,6 +384,15 @@ path  = trainer.export_step_metrics()                     # writes metrics/step_
 trainer.clear_metrics()                                   # reset both epoch and step tables
 ```
 
+#### Weighted averaging
+
+Epoch metrics are sample-weighted averages — `Σ(metric × weight) / Σweight` across the steps in an epoch — so uneven final batches are weighted correctly. Each batch's weight defaults to its sample count; override `get_batch_weight` to weight by something else, e.g. token count for language models where loss is reported per token:
+
+```python
+def get_batch_weight(self, batch: Any) -> int:
+    return int(batch["attention_mask"].sum())
+```
+
 ---
 
 ### Custom Training Loop
@@ -401,6 +420,13 @@ metrics = trainer.execute_epoch(loader, phase="train", print_metrics=True)
 metrics = trainer.execute_step(batch,  phase="val",   print_metrics=True)
 ```
 
+Both building blocks honor `accumulation_steps`: `execute_epoch` flushes each cycle automatically, and `execute_step` updates the optimizer on every `accumulation_steps`-th `step` you pass:
+
+```python
+for i, batch in enumerate(train_loader, 1):
+    trainer.execute_step(batch, phase="train", step=i)
+```
+
 ---
 
 ### State Inspection
@@ -413,7 +439,7 @@ trainer.should_stop_early()          # True if patience is exhausted
 trainer.print_status()               # epoch counter, best monitored value, recent metrics
 trainer.print_model_summary()        # model names and parameter counts
 trainer.print_env_summary()          # OS, CPU, RAM, GPU, Python, PyTorch versions
-trainer.print_optimization_summary() # optimizer and scheduler class names
+trainer.print_optimization_summary() # optimizer, scheduler, and gradient accumulation
 ```
 
 ---
