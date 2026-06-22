@@ -81,8 +81,12 @@ class BaseTrainer(abc.ABC):
             first, so this is correct under fp16 AMP as well.
         accumulation_steps: Accumulate gradients over this many steps before
             each optimizer update, simulating a larger effective batch with no
-            extra memory. The loss is divided by this factor so the accumulated
-            gradients equal one full update. Defaults to ``1`` (update every step).
+            extra memory. Gradients are normalized as the weighted mean
+            ``Σ wᵢ∇Lᵢ / Σ wᵢ`` with per-batch weights ``wᵢ`` from
+            ``get_batch_weight`` — keep those equal to the loss's denominator
+            (e.g. token count for per-token losses) so variable-length batches
+            are not mis-weighted. Defaults to ``1`` (update every step; the
+            weight is then unused).
         amp: Automatic mixed precision. ``None`` (default) auto-enables bf16 on
             CUDA and is a no-op elsewhere; an explicit ``True``/``"bf16"``/
             ``"fp16"`` is warned about when the device is not CUDA, and
@@ -248,6 +252,11 @@ class BaseTrainer(abc.ABC):
         self._best_epoch: int | None = None
         self._epochs_no_improve: int = 0
 
+        # ── Internal: gradient-accumulation weighting (see _optimizer_step) ───
+        # Running weight sum of the in-progress accumulation cycle; unused when
+        # accumulation_steps == 1.
+        self._cycle_weight: float = 0.0
+
         # ── Internal: metrics ─────────────────────────────────────────────────
         self._epoch_metrics: MetricTable = {}
         self._step_metrics: MetricTable = {}
@@ -392,12 +401,24 @@ class BaseTrainer(abc.ABC):
 
     def get_batch_weight(self, batch: Any) -> int:
         """
-        Return the weight of ``batch`` for metric averaging.
+        Return the weight of ``batch`` for metric averaging and gradient
+        accumulation.
 
-        Metrics are averaged as ``Σ(metric × weight) / Σweight`` across all
-        steps in an epoch; override to use a domain-specific weight instead of
-        the default sample count (e.g. token count for language models, where
-        sequences have variable length and loss is reported per token).
+        Metrics are averaged as ``Σ(metric × weight) / Σweight`` across the
+        steps in an epoch. When ``accumulation_steps > 1`` the same weight also
+        normalizes the accumulated gradient; with ``accumulation_steps == 1``
+        the weight affects only metric averaging, not the gradient.
+
+        The weight must equal the denominator the per-batch loss was divided by
+        — only then does the accumulated gradient reconstruct the true mean over
+        the effective batch (and the reported loss become a true weighted mean);
+        a mismatched weight biases both. The default is the sample count, which
+        fits a per-sample mean loss.
+
+        For a language/vision-language model whose loss is a mean over the
+        supervised tokens, that denominator is the ``labels != -100`` count —
+        *not* ``attention_mask.sum()``, since prompt/image tokens are masked out
+        of the loss and so are absent from its denominator.
 
         Args:
             batch: The current batch.
@@ -408,7 +429,8 @@ class BaseTrainer(abc.ABC):
         Example::
 
             def get_batch_weight(self, batch):
-                return int(batch["attention_mask"].sum())
+                # HF LM/VLM loss is a mean over labels != -100; weight must match.
+                return int((batch["labels"] != -100).sum())
         """
         return self._batch_size(batch)
 
@@ -1504,9 +1526,11 @@ class BaseTrainer(abc.ABC):
     def _run_epoch(self, loader: DataLoader, phase: str, training: bool) -> dict[str, float]:
         # Start each training epoch with a clean gradient state so any
         # unstepped accumulation from the previous epoch (possible for
-        # IterableDataset loaders whose length is unknown) is discarded.
+        # IterableDataset loaders whose length is unknown) is discarded —
+        # including the per-cycle weight that would normalize those gradients.
         if training and self._optimizer is not None:
             self._optimizer.zero_grad(set_to_none=True)
+            self._cycle_weight = 0.0
         pbar: tqdm | None = (
             tqdm(loader, desc=f"{phase.capitalize()} Epoch", leave=self.keep_progress_bar)
             if self.use_progress_bar else None
@@ -1516,7 +1540,9 @@ class BaseTrainer(abc.ABC):
         max_step = self._loader_len(loader)  # 0 for length-less IterableDataset loaders
         for step, batch in enumerate(pbar or loader, 1):
             weight = self.get_batch_weight(batch)
-            metrics = self._execute_step(batch, phase, training, step=step, max_step=max_step)
+            metrics = self._execute_step(
+                batch, phase, training, step=step, max_step=max_step, weight=weight,
+            )
             self._accumulate_metrics(accumulated, metrics, weight)
             total_weight += weight
             if pbar is not None:
@@ -1531,13 +1557,21 @@ class BaseTrainer(abc.ABC):
         training: bool,
         step: int | None = None,
         max_step: int = 0,
+        weight: float | None = None,
     ) -> dict[str, float]:
         batch = self._to_device(batch)
         self.on_step_start(step, batch, phase)
         # A training step fires the optimizer update only on the step that closes
         # an accumulation cycle (every step when accumulation_steps == 1).
         apply_update = training and self._is_accumulation_boundary(step or 0, max_step)
-        metrics = self._run_step(batch, phase, training, apply_update=apply_update)
+        # The per-batch weight drives gradient-accumulation normalization. The
+        # epoch loop already computes it (for metric averaging) and passes it in;
+        # the standalone ``execute_step`` path computes it here on demand.
+        if training and weight is None:
+            weight = self.get_batch_weight(batch)
+        metrics = self._run_step(
+            batch, phase, training, weight=weight, apply_update=apply_update,
+        )
         # Throttle intermediate steps, but always write the final step of a
         # phase so the gauge's inner ring reaches 100% before the phase resets.
         self._dash_update(
@@ -1550,15 +1584,24 @@ class BaseTrainer(abc.ABC):
         return metrics
 
     def _run_step(
-        self, batch: Any, phase: str, training: bool, *, apply_update: bool = True,
+        self,
+        batch: Any,
+        phase: str,
+        training: bool,
+        *,
+        weight: float | None,
+        apply_update: bool = True,
     ) -> dict[str, float]:
+        # ``weight`` has no default but may be ``None``: evaluation ignores it,
+        # while training always supplies it (computed in ``_execute_step``).
         with torch.set_grad_enabled(training):
             with self._autocast():
                 loss = self.compute_loss(batch)
             # Backward and the optimizer update run outside autocast — as AMP
             # requires — while still under the grad-enabled context above.
             if training:
-                self._optimizer_step(loss, apply_update=apply_update)
+                assert weight is not None  # guaranteed by _execute_step when training
+                self._optimizer_step(loss, weight, apply_update=apply_update)
         # The final test phase reports its own (possibly heavier) metrics; every
         # other phase shares the cheap per-epoch ``compute_metrics`` path.
         metric_fn = (
@@ -1597,21 +1640,59 @@ class BaseTrainer(abc.ABC):
         """
         return step % self.accumulation_steps == 0 or (max_step > 0 and step == max_step)
 
-    def _optimizer_step(self, loss: torch.Tensor, *, apply_update: bool = True) -> None:
+    def _optimizer_step(
+        self, loss: torch.Tensor, weight: float, *, apply_update: bool = True,
+    ) -> None:
         if self._optimizer is None:
             raise RuntimeError("An optimizer is required for training.")
-        # Divide the loss so that N accumulated backwards equal one full step;
-        # a disabled scaler (bf16 / no AMP) is a transparent passthrough.
-        self._scaler.scale(loss / self.accumulation_steps).backward()
-        # Fires on every backward, including mid-cycle accumulation steps.
-        # Under fp16 AMP the gradients are still scaled here; see
+
+        # Fast path: with no accumulation, one backward is one full update and
+        # the loss is already the per-batch mean, so no weighting is needed.
+        # A disabled scaler (bf16 / no AMP) is a transparent passthrough.
+        if self.accumulation_steps == 1:
+            self._scaler.scale(loss).backward()
+            self.on_after_backward()
+            self._apply_optimizer_step(grad_scale=None)
+            return
+
+        # Gradient accumulation. Weight each micro-batch's loss by its sample/
+        # token count so the accumulated gradient is the true weighted mean over
+        # the whole effective batch — Σ wᵢ∇Lᵢ / Σ wᵢ. A plain loss/N is only
+        # correct when every micro-batch carries the same number of items; with
+        # variable-length sequences it over-weights the shorter batches.
+        self._cycle_weight += weight
+        self._scaler.scale(loss * weight).backward()
+        # Fires on every backward, including mid-cycle accumulation steps. Under
+        # fp16 AMP the gradients are still scaled here; see
         # ``on_before_optimizer_step`` for the unscaled, post-clip view.
         self.on_after_backward()
-        # Unscale / clip / step only when the accumulation cycle is complete.
+        # Normalize / clip / step only when the accumulation cycle is complete.
         if not apply_update:
             return
+        # Divide the accumulated gradient by the cycle's total weight to recover
+        # the weighted mean. A short tail cycle (final, partial accumulation
+        # window) divides by its own weight, not a full N, so it is unbiased too.
+        grad_scale = 1.0 / self._cycle_weight if self._cycle_weight > 0 else 1.0
+        self._cycle_weight = 0.0
+        self._apply_optimizer_step(grad_scale=grad_scale)
+
+    def _apply_optimizer_step(self, *, grad_scale: float | None) -> None:
+        """Renormalize (optionally), clip, and run one optimizer step.
+
+        ``grad_scale`` multiplies every gradient before clipping/stepping — the
+        ``1/Σw`` accumulation normalizer — or ``None`` to skip it. Multiplying by
+        a constant commutes with the AMP loss-scale, so the normalization is
+        applied to the still-scaled gradients and ``unscale_`` is only needed
+        when clipping (which must see real-unit gradients).
+        """
+        assert self._optimizer is not None  # guarded by the caller
+        if grad_scale is not None and grad_scale != 1.0:
+            for group in self._optimizer.param_groups:
+                for p in group["params"]:
+                    if p.grad is not None:
+                        p.grad.mul_(grad_scale)
         if self.max_grad_norm is not None:
-            # Gradients must be unscaled into "real" units before clipping;
+            # Gradients must be unscaled into real units before clipping;
             # unscale_ is a no-op on a disabled scaler.
             self._scaler.unscale_(self._optimizer)
             # Clip exactly the parameters the optimizer owns — the same set

@@ -126,7 +126,7 @@ All parameters except `num_epochs` are **keyword-only**, so order never matters 
 | `batch_size` | `None` | Informational; accessible in `setup()` as `self.batch_size`. |
 | `learning_rate` | `None` | Scalar or per-group dict; available as `self.learning_rate` in `setup()`. Leave unset for learning-rate-free optimizers (e.g. Prodigy, D-Adaptation, Schedule-Free); **pass it explicitly for optimizers that need one** (e.g. Adam, SGD), since `self.learning_rate` is `None` until you do. |
 | `max_grad_norm` | `None` | Clip the global gradient norm to this value before each optimizer step. Disabled when `None`. Correct under fp16 AMP — gradients are unscaled first. |
-| `accumulation_steps` | `1` | Accumulate gradients over this many steps before each optimizer update, simulating a larger effective batch with no extra memory. The loss is rescaled so *N* micro-steps equal one full step; for known-length loaders the last partial cycle of each epoch is always flushed. |
+| `accumulation_steps` | `1` | Accumulate gradients over this many steps before each optimizer update, simulating a larger effective batch with no extra memory. The accumulation is normalized as `Σ wᵢ∇Lᵢ / Σ wᵢ` with weights from `get_batch_weight`; this is the true mean over the effective batch only when the weight matches the loss's denominator (override to the token count for per-token losses — the default sample count fits a per-sample mean). For known-length loaders the last partial cycle of each epoch is always flushed. |
 | `amp` | `None` | Automatic mixed precision. `None` auto-enables bf16 on CUDA (no-op on CPU/MPS); `True`/`"bf16"`/`"fp16"` requests it explicitly (warns if the device is not CUDA); `False` forces full precision. |
 | `tf32` | `None` | Allow TF32 fp32 matmuls/convolutions and the cuDNN autotuner on CUDA (Ampere+). `None` auto-enables it only when `seed` is unset (speed when not reproducing); `True`/`False` force it. CUDA-only; complementary to `amp`. |
 | `patience` | `None` | Early-stopping patience in epochs. Disabled when `None`. |
@@ -386,11 +386,12 @@ trainer.clear_metrics()                                   # reset both epoch and
 
 #### Weighted averaging
 
-Epoch metrics are sample-weighted averages — `Σ(metric × weight) / Σweight` across the steps in an epoch — so uneven final batches are weighted correctly. Each batch's weight defaults to its sample count; override `get_batch_weight` to weight by something else, e.g. token count for language models where loss is reported per token:
+Epoch metrics are sample-weighted averages — `Σ(metric × weight) / Σweight` across the steps in an epoch — so uneven final batches are weighted correctly. Each batch's weight defaults to its sample count; override `get_batch_weight` to weight by the loss's denominator instead, e.g. the supervised-token count for a language/vision-language model whose loss is a mean over `labels != -100`. The same weight also normalizes the accumulated gradient when `accumulation_steps > 1`, so loss and gradient stay consistently weighted:
 
 ```python
 def get_batch_weight(self, batch: Any) -> int:
-    return int(batch["attention_mask"].sum())
+    # HF LM/VLM loss is a mean over labels != -100; weight must match.
+    return int((batch["labels"] != -100).sum())
 ```
 
 ---
