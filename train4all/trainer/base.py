@@ -497,8 +497,9 @@ class BaseTrainer(abc.ABC):
         """
         Called after a full checkpoint has been restored, with the raw dict.
 
-        Use it to read back anything stored via :meth:`on_save_checkpoint` or
-        ``update_checkpoint_extras()``. Not called for weights-only loads.
+        Use it to read back custom state written in :meth:`on_save_checkpoint`.
+        Extras from ``update_checkpoint_extras()`` restore automatically (read
+        them via :meth:`get_checkpoint_extras`). Not called for weights-only loads.
 
         Args:
             checkpoint: The checkpoint dict that was just loaded.
@@ -1109,9 +1110,10 @@ class BaseTrainer(abc.ABC):
         """
         Return a copy of the checkpoint ``extras`` dict.
 
-        Mirrors :meth:`update_checkpoint_extras`. After a full checkpoint is
-        loaded, this reflects the restored extras, so it is the symmetric way to
-        read back static metadata without overriding :meth:`on_load_checkpoint`.
+        Mirrors :meth:`update_checkpoint_extras`. After any checkpoint is loaded
+        (full or weights-only), this reflects the restored extras, so it is the
+        symmetric way to read back static metadata without overriding
+        :meth:`on_load_checkpoint`.
         """
         return dict(self._ckpt_extras)
 
@@ -1814,6 +1816,13 @@ class BaseTrainer(abc.ABC):
             if status is not None:
                 loaded[name] = status
 
+        # Extras ride along with both full and weights-only checkpoints (see
+        # ``_build_checkpoint``), so they round-trip on either load.
+        extras = checkpoint.get("extras")
+        if extras:
+            self._ckpt_extras.update(extras)
+            loaded["extras"] = "restored"
+
         if not weights_only:
             # Optimizer, scheduler, and scaler share one load-and-record path;
             # each key doubles as the checkpoint key and the status label.
@@ -1840,12 +1849,8 @@ class BaseTrainer(abc.ABC):
             self._step_metrics  = saved_metrics.get("step_metrics",  self._step_metrics)
             loaded["metrics"] = "restored"
 
-            # Round-trip the extras saved by ``update_checkpoint_extras()`` and
-            # let subclasses restore any custom state from the raw checkpoint.
-            extras = checkpoint.get("extras")
-            if extras:
-                self._ckpt_extras.update(extras)
-                loaded["extras"] = "restored"
+            # Let subclasses restore any custom state from the raw full
+            # checkpoint (the counterpart of ``on_save_checkpoint``).
             self.on_load_checkpoint(checkpoint)
 
         print_flat_dict_tree(
