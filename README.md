@@ -118,7 +118,7 @@ trainer.test(make_loader(10_000), use_best=True)
 
 ## Constructor Parameters
 
-All parameters except `num_epochs` are **keyword-only**, so order never matters and the table can be reordered freely. The saved config records **only the reproducibility-relevant arguments you actually customized** — anything left at its default is omitted — and unpacks straight back in: `MyTrainer(**trainer._config)` restores those settings (operational ones like `run_dir` and `device` fall back to their defaults).
+All parameters except `num_epochs` are **keyword-only**, so order never matters and the table can be reordered freely. The saved config records **only the reproducibility-relevant arguments you actually customized** — anything left at its default is omitted — and unpacks straight back in: `MyTrainer(**trainer._config)` restores those settings. The **resolved `device`** is also pinned (e.g. `"cuda:0"`), so a reload targets the same hardware for exact reproduction and fails loudly on a host that lacks it; purely operational args like `run_dir` are omitted and fall back to their defaults.
 
 | Parameter | Default | Description |
 | :-- | :-- | :-- |

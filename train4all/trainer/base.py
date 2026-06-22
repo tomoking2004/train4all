@@ -279,6 +279,9 @@ class BaseTrainer(abc.ABC):
 
         # ── Derived initialization (depends on the attributes set above) ──────
         self._init_amp(amp)  # needs ``device`` and ``logger``
+        if seed is not None:
+            self._set_seed(seed)  # needs ``device``
+        self._init_tf32(tf32)  # needs ``device`` and ``seed``; runs after _set_seed
 
         # Reproducibility config — only the arguments the caller actually
         # customized (anything left at its default is omitted), so the saved
@@ -297,10 +300,11 @@ class BaseTrainer(abc.ABC):
             "training_phases": training_phases,
             "seed": seed,
         })
-
-        if self.seed is not None:
-            self._set_seed(self.seed)  # needs ``device``
-        self._init_tf32(tf32)  # needs ``device`` and ``seed``; runs after _set_seed
+        # Record the *resolved* device unconditionally (not via the filter
+        # above): a raw ``device=None`` would be dropped and re-resolved
+        # differently on another host, so pinning it keeps reproduction exact —
+        # ``MyTrainer(**config)`` then fails loudly on a host that lacks it.
+        self._config["device"] = str(self.device)
 
         cfg = dashboard_config or DashboardConfig()
         self._dashboard: Dashboard | None = (
