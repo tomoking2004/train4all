@@ -795,7 +795,7 @@ class BaseTrainer(abc.ABC):
                 phase, or ``None`` if validation was not performed.
         """
         self._update_early_stopping(monitor_value)
-        self._scheduler_step(monitor_value)
+        self._step_scheduler(monitor_value)
 
     def reset_training_state(self) -> None:
         """Reset the epoch counter, best-metric tracking, and early-stopping counters."""
@@ -1623,7 +1623,7 @@ class BaseTrainer(abc.ABC):
         self._scaler.update()
         self._optimizer.zero_grad(set_to_none=True)
 
-    def _scheduler_step(self, monitor_value: float | None = None) -> None:
+    def _step_scheduler(self, monitor_value: float | None = None) -> None:
         if self._scheduler is None:
             return
         if isinstance(self._scheduler, ReduceLROnPlateau):
