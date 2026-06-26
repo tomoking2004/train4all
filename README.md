@@ -146,7 +146,7 @@ All parameters except `num_epochs` are **keyword-only**, so order never matters 
 | `keep_progress_bar` | `False` | Persist progress bars after each epoch completes. |
 | `key_width` | `32` | Column width for printed metric and summary tables. |
 | `debug_mode` | `False` | Enable debug-level logging. |
-| `logger` | `None` | External `UnifiedLogger` instance; a default one is created if `None`. |
+| `logger` | `None` | Any object satisfying the `TrainerLogger` protocol (a `log()` method); a default `UnifiedLogger` is created if `None`. |
 | `use_dashboard` | `False` | Enable the live web dashboard. |
 | `dashboard_config` | `None` | Dashboard appearance and behaviour (`DashboardConfig`). |
 

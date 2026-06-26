@@ -30,12 +30,12 @@ from train4all.utils import (
     DashboardConfig,
     LogLevel,
     MetricTable,
+    TrainerLogger,
     UnifiedLogger,
     copy_dir,
     get_metric_plot_filename,
     get_metric_plot_title,
     print_dict_tree,
-    print_flat_dict_tree,
     replace_dict_keys,
     save_curves_plot,
 )
@@ -119,7 +119,8 @@ class BaseTrainer(abc.ABC):
         keep_progress_bar: Persist progress bars after an epoch completes.
         key_width: Column width used when printing metric and summary tables.
         debug_mode: Enable debug-level logging (forwarded to the logger).
-        logger: External logger instance. A default ``UnifiedLogger`` is created if ``None``.
+        logger: Any object satisfying the :class:`TrainerLogger` protocol.
+            A default ``UnifiedLogger`` is created if ``None``.
         use_dashboard: Enable the live web dashboard.
         dashboard_config: Dashboard appearance and behaviour settings.
             A default :class:`DashboardConfig` is used when ``None``.
@@ -187,7 +188,7 @@ class BaseTrainer(abc.ABC):
         keep_progress_bar: bool = False,
         key_width: int = 32,
         debug_mode: bool = False,
-        logger: UnifiedLogger | None = None,
+        logger: TrainerLogger | None = None,
         use_dashboard: bool = False,
         dashboard_config: DashboardConfig | None = None,
     ) -> None:
@@ -1401,8 +1402,9 @@ class BaseTrainer(abc.ABC):
             metrics: Mapping of metric name to value.
             phase: Phase label shown in the header.
         """
-        print_flat_dict_tree(
-            data=metrics,
+        print_dict_tree(
+            metrics,
+            max_depth=0,
             header=f"📊 {phase.capitalize()}",
             key_width=self.key_width,
             float_fmt=4,
@@ -1857,9 +1859,9 @@ class BaseTrainer(abc.ABC):
             # checkpoint (the counterpart of ``on_save_checkpoint``).
             self.on_load_checkpoint(checkpoint)
 
-        print_flat_dict_tree(
-            data=loaded,
-            header=None,
+        print_dict_tree(
+            loaded,
+            max_depth=0,
             key_width=self.key_width,
             print_fn=self.print,
         )
