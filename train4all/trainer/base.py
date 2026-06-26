@@ -1327,18 +1327,52 @@ class BaseTrainer(abc.ABC):
 
     # ── Logging & Display ─────────────────────────────────────────────────────
 
+    @staticmethod
+    def _os_name() -> str:
+        """Human-readable OS name and version: the distro on Linux (e.g.
+        ``Ubuntu 24.04``) and ``macOS <ver>`` on Darwin, not the kernel release."""
+        system = platform.system()
+        if system == "Linux":
+            try:
+                return platform.freedesktop_os_release().get("PRETTY_NAME") or "Linux"
+            except OSError:
+                return f"Linux {platform.release()}"
+        if system == "Darwin":
+            return f"macOS {platform.mac_ver()[0]}".rstrip()
+        return f"{system} {platform.release()}"
+
+    @staticmethod
+    def _cpu_name() -> str:
+        """Best-effort CPU model name. ``platform.processor()`` yields only the
+        architecture (e.g. ``x86_64``) off Windows, so query the OS directly and
+        fall back to the architecture only when the model is unavailable."""
+        system = platform.system()
+        try:
+            if system == "Windows":
+                import winreg
+                with winreg.OpenKey(
+                    winreg.HKEY_LOCAL_MACHINE,
+                    r"HARDWARE\DESCRIPTION\System\CentralProcessor\0",
+                ) as key:
+                    return winreg.QueryValueEx(key, "ProcessorNameString")[0].strip()
+            if system == "Darwin":
+                return subprocess.check_output(
+                    ["sysctl", "-n", "machdep.cpu.brand_string"], text=True
+                ).strip()
+            if system == "Linux":
+                for line in Path("/proc/cpuinfo").read_text().splitlines():
+                    if line.startswith("model name"):
+                        return line.split(":", 1)[1].strip()
+        except Exception:
+            pass
+        return platform.processor() or platform.machine() or "Unknown"
+
     def get_env_info(self) -> dict[str, Any]:
         """Return the system and runtime environment summary as a dict."""
-        try:
-            import wmi
-            cpu_name = wmi.WMI().Win32_Processor()[0].Name
-        except Exception:
-            cpu_name = platform.uname().processor or platform.processor() or "Unknown"
-
         disk = shutil.disk_usage(self.run_dir)
         info: dict[str, Any] = {
-            "OS":        f"{platform.system()} {platform.release()}",
-            "CPU":       cpu_name,
+            "OS":        self._os_name(),
+            "CPU":       self._cpu_name(),
             "CPU cores": multiprocessing.cpu_count(),
             "RAM":       f"{psutil.virtual_memory().total / 1e9:.2f} GB",
             "Disk":      f"{disk.free / 1e9:.2f} / {disk.total / 1e9:.2f} GB free",

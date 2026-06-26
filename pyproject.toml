@@ -17,7 +17,6 @@ dependencies = [
     "psutil",
     "torch>=2.0",
     "tqdm",
-    "wmi; platform_system == 'Windows'",
 ]
 
 [project.urls]
