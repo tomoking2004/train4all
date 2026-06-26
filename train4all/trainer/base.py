@@ -71,7 +71,8 @@ class BaseTrainer(abc.ABC):
     per-step metrics are weighted when averaged over an epoch.
 
     Args:
-        num_epochs: Total number of training epochs.
+        num_epochs: Total number of training epochs. Required by ``train()``;
+            leave unset (``None``) to only evaluate (``test()``) or inspect checkpoints.
         batch_size: Batch size (informational; not used internally).
         learning_rate: Learning rate(s) forwarded to the optimizer in ``setup()``.
             ``None`` (default) sets no rate — leave it unset for learning-rate-free
@@ -165,7 +166,7 @@ class BaseTrainer(abc.ABC):
 
     def __init__(
         self,
-        num_epochs: int,
+        num_epochs: int | None = None,
         *,
         batch_size: int | None = None,
         learning_rate: float | dict[str, float] | None = None,
@@ -599,7 +600,11 @@ class BaseTrainer(abc.ABC):
             train_loader: DataLoader for training data.
             val_loader: DataLoader for validation data. Required when
                 early stopping (``patience``) is enabled.
+
+        Raises:
+            ValueError: If ``num_epochs`` was not set on the trainer.
         """
+        self._require_num_epochs()
         self.prepare_training()
 
         if self.is_training_completed():
@@ -811,7 +816,11 @@ class BaseTrainer(abc.ABC):
         Yield ``(current_epoch, num_epochs)`` for each training epoch.
 
         Automatically increments the internal epoch counter.
+
+        Raises:
+            ValueError: If ``num_epochs`` was not set on the trainer.
         """
+        self._require_num_epochs()
         while self._current_epoch < self.num_epochs:
             self._current_epoch += 1
             yield self._current_epoch, self.num_epochs
@@ -838,8 +847,11 @@ class BaseTrainer(abc.ABC):
         self._epochs_no_improve = 0
 
     def is_training_completed(self) -> bool:
-        """Return ``True`` if the epoch counter has reached ``num_epochs``."""
-        return self._current_epoch >= self.num_epochs
+        """Return ``True`` if the epoch counter has reached ``num_epochs``.
+
+        Always ``False`` when ``num_epochs`` is unset, since no training is configured.
+        """
+        return self.num_epochs is not None and self._current_epoch >= self.num_epochs
 
     def is_best_epoch(self) -> bool:
         """Return ``True`` if the current epoch achieved the best ``monitor`` value."""
@@ -1737,6 +1749,15 @@ class BaseTrainer(abc.ABC):
 
     # ── Internal: Early Stopping / Mode ──────────────────────────────────────
 
+    def _require_num_epochs(self) -> None:
+        """Guard the training-only entry points against an unset ``num_epochs``."""
+        if self.num_epochs is None:
+            raise ValueError(
+                "train() requires num_epochs; pass it to the constructor "
+                "(e.g. MyTrainer(num_epochs=10)). To only evaluate, use test() or "
+                "execute_epoch(); to inspect a saved file, use Checkpoint.load(...)."
+            )
+
     @staticmethod
     def _validate_mode(monitor_mode: str) -> str:
         if monitor_mode not in ("min", "max"):
@@ -2301,9 +2322,8 @@ class BaseTrainer(abc.ABC):
 
     def _customized_config(self, provided: dict[str, Any]) -> dict[str, Any]:
         """Return only the entries whose value differs from the constructor's
-        default, so a saved config records exactly what the caller customized.
-
-        ``num_epochs`` (which has no default) is always kept.
+        default, so a saved config records exactly what the caller customized
+        (e.g. ``num_epochs`` is recorded when set, omitted when left ``None``).
         """
         params = inspect.signature(BaseTrainer.__init__).parameters
         return {

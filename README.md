@@ -119,11 +119,11 @@ trainer.test(make_loader(10_000), use_best=True)
 
 ## Constructor Parameters
 
-All parameters except `num_epochs` are **keyword-only**, so order never matters and the table can be reordered freely. The saved config records **only the reproducibility-relevant arguments you actually customized** — anything left at its default is omitted — and unpacks straight back in: `MyTrainer(**trainer._config)` restores those settings. The **resolved `device`** is also pinned (e.g. `"cuda:0"`), so a reload targets the same hardware for exact reproduction and fails loudly on a host that lacks it; purely operational args like `run_dir` are omitted and fall back to their defaults.
+Every parameter is optional, and all except `num_epochs` are **keyword-only**, so order never matters and the table can be reordered freely. The saved config records **only the reproducibility-relevant arguments you actually customized** — anything left at its default is omitted — and unpacks straight back in: `MyTrainer(**trainer._config)` restores those settings. The **resolved `device`** is also pinned (e.g. `"cuda:0"`), so a reload targets the same hardware for exact reproduction and fails loudly on a host that lacks it; purely operational args like `run_dir` are omitted and fall back to their defaults.
 
 | Parameter | Default | Description |
 | :-- | :-- | :-- |
-| `num_epochs` | — | Total training epochs *(required)*. |
+| `num_epochs` | `None` | Total training epochs. Required by `train()`; leave unset to only evaluate (`test()`) or inspect checkpoints. |
 | `batch_size` | `None` | Informational; accessible in `setup()` as `self.batch_size`. |
 | `learning_rate` | `None` | Scalar or per-group dict; available as `self.learning_rate` in `setup()`. Leave unset for learning-rate-free optimizers (e.g. Prodigy, D-Adaptation, Schedule-Free); **pass it explicitly for optimizers that need one** (e.g. Adam, SGD), since `self.learning_rate` is `None` until you do. |
 | `max_grad_norm` | `None` | Clip the global gradient norm to this value before each optimizer step. Disabled when `None`. Correct under fp16 AMP — gradients are unscaled first. |
