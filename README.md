@@ -534,7 +534,7 @@ trainer = MyTrainer(
 | `data_filename` | `"dashboard_data.json"` | JSON data file polled by the browser. |
 | `poll_interval_ms` | `500` | Browser polling interval in milliseconds. |
 | `open_on_start` | `True` | Open in the system's default browser when training begins. |
-| `stale_multiplier` | `12` | Mark training stale after `poll_interval_ms × stale_multiplier` ms without a JSON update. |
+| `stale_after_ms` | `30000` | Mark the run **Offline** after this many ms without a heartbeat. An absolute liveness timeout, independent of `poll_interval_ms` — size it above your slowest synchronous pause (large checkpoint saves, heavy plotting). |
 | `use_server` | `True` | Start a local HTTP server (required for Chrome/Edge on `file://` pages). |
 
 ---

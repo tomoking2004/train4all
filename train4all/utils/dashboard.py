@@ -108,9 +108,10 @@ class DashboardConfig:
         poll_interval_ms: Browser polling interval in milliseconds.
         open_on_start:    Open in the system browser when
                           :meth:`Dashboard.initialize` is called.
-        stale_multiplier: Declare training stale when no JSON update arrives
-                          within ``poll_interval_ms × stale_multiplier`` ms,
-                          switching the dashboard to the *Offline* state.
+        stale_after_ms:   Declare training *Offline* after this many ms without
+                          a heartbeat — an absolute timeout independent of
+                          ``poll_interval_ms``. Size it above your slowest
+                          synchronous pause (large saves, heavy plotting).
         use_server:       Start a local HTTP server so the browser can
                           ``fetch()`` the JSON data file — required for
                           Chrome and Edge, which block cross-origin
@@ -122,7 +123,7 @@ class DashboardConfig:
     data_filename: str = "dashboard_data.json"
     poll_interval_ms: int = 500
     open_on_start: bool = True
-    stale_multiplier: int = 12
+    stale_after_ms: int = 30000
     use_server: bool = True
 
 
@@ -162,6 +163,9 @@ class Dashboard:
         self._last_max_step: int = 0
         self._data_lock = threading.Lock()
         self._keepalive_stop = threading.Event()
+        # The most recent full JSON payload, kept so the heartbeat can refresh
+        # its timestamp without re-reading and re-parsing the (growing) file.
+        self._last_payload: dict[str, Any] | None = None
         # Live telemetry surfaced beside the gauge. The step-loss buffer is a
         # rolling window of recent training-step losses; learning rate and GPU
         # memory are the latest readings. All are held on the instance so the
@@ -249,7 +253,7 @@ class Dashboard:
             .replace("__T4A_CSS__", _CSS)
             .replace("__T4A_POLL_MS__", str(self._config.poll_interval_ms))
             .replace("__T4A_DATA_FILE__", self._config.data_filename)
-            .replace("__T4A_STALE_MULT__", str(self._config.stale_multiplier))
+            .replace("__T4A_STALE_MS__", str(self._config.stale_after_ms))
             .replace("__T4A_VERSION__", _VERSION)
         )
         self._atomic_write(self._html_path, html_content)
@@ -435,19 +439,27 @@ class Dashboard:
             "poll_interval_ms":   self._config.poll_interval_ms,
         }
         with self._data_lock:
+            self._last_payload = data
             self._atomic_write(self._data_path, json.dumps(data))
 
-    def _touch_data(self) -> None:
-        """Bump ``last_update_ms`` so a live-but-paused run is not flagged stale."""
+    def heartbeat(self) -> None:
+        """Refresh the liveness timestamp without changing the displayed data.
+
+        Cheap and idempotent — a no-op until the first :meth:`update` and after
+        :meth:`finalize`. Call it around long synchronous work (saving
+        checkpoints, plotting) that would otherwise starve the keepalive thread
+        and let the browser flag a live run as *Offline*.
+        """
+        if self.active:
+            self._heartbeat()
+
+    def _heartbeat(self) -> None:
+        """Rewrite the cached payload with a fresh ``last_update_ms``."""
         with self._data_lock:
-            if not self._data_path.exists():
+            if self._last_payload is None:
                 return
-            try:
-                data = json.loads(self._data_path.read_text(encoding="utf-8"))
-            except (OSError, json.JSONDecodeError):
-                return
-            data["last_update_ms"] = int(time.time() * 1000)
-            self._atomic_write(self._data_path, json.dumps(data))
+            self._last_payload["last_update_ms"] = int(time.time() * 1000)
+            self._atomic_write(self._data_path, json.dumps(self._last_payload))
 
     def _embed_data_in_html(self) -> None:
         """Rewrite the HTML to embed the final data inline for offline viewing.
@@ -543,14 +555,18 @@ class Dashboard:
         threading.Thread(target=server.serve_forever, daemon=True).start()
 
     def _start_keepalive(self) -> None:
-        """Refresh ``last_update_ms`` periodically so the browser only sees
-        *Offline* when the Python process actually dies. The thread stops as
-        soon as :meth:`finalize` is called."""
+        """Refresh the heartbeat every poll interval so the browser sees *Offline*
+        only when the process actually dies; the thread stops at :meth:`finalize`.
+
+        Sharing the GIL, it can be delayed by a long synchronous call on the main
+        thread, so ``stale_after_ms`` absorbs such pauses and the trainer also
+        pulses :meth:`heartbeat` directly around them.
+        """
         interval = self._config.poll_interval_ms / 1000
 
         def _run() -> None:
             while not self._keepalive_stop.wait(interval):
-                self._touch_data()
+                self._heartbeat()
 
         threading.Thread(target=_run, daemon=True).start()
 
@@ -937,7 +953,7 @@ _HTML_SHELL = r"""<!DOCTYPE html>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="poll-ms"    content="__T4A_POLL_MS__">
 <meta name="data-file"  content="__T4A_DATA_FILE__">
-<meta name="stale-mult" content="__T4A_STALE_MULT__">
+<meta name="stale-ms"   content="__T4A_STALE_MS__">
 <meta name="version"    content="__T4A_VERSION__">
 <title>train4all — Dashboard</title>
 <script>(function () { try {
@@ -1096,7 +1112,7 @@ document.addEventListener('DOMContentLoaded', function () {
   const META      = (n) => document.querySelector('meta[name="' + n + '"]');
   const POLL_MS   = parseInt(META('poll-ms').content) || 1000;
   const DATA_FILE = META('data-file').content;
-  const STALE_X   = parseInt(META('stale-mult').content) || 8;
+  const STALE_MS  = parseInt(META('stale-ms').content) || 30000;
   const VERSION   = META('version') ? META('version').content : '';
   const REDUCED   = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 
@@ -1728,7 +1744,7 @@ document.addEventListener('DOMContentLoaded', function () {
   async function tick() {
     const d = window.__TRAIN4ALL_DATA__ || await fetchData();
     if (!d) return;
-    if (d.status === 'training' && Date.now() - (d.last_update_ms || 0) > POLL_MS * STALE_X) d.status = 'stopped';
+    if (d.status === 'training' && Date.now() - (d.last_update_ms || 0) > STALE_MS) d.status = 'stopped';
 
     const grad = !!d.is_gradient_phase, ni = d.epochs_no_improve || 0, done = d.status === 'completed';
     const active = !!(d.last_phase && d.max_step && d.current_step);

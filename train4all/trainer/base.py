@@ -1000,13 +1000,18 @@ class BaseTrainer(abc.ABC):
             metric_names: Metrics to include. ``None`` includes all.
             phases: Phases to include. ``None`` includes all.
         """
+        # These sub-steps are slow and GIL-holding (torch.save, matplotlib, JSON);
+        # pulse the heartbeat between them so a slow one never trips *Offline*.
         self.save_checkpoints()
+        self._dash_heartbeat()
         if self._epoch_metrics:
             self.save_epoch_metric_plots(metric_names=metric_names, phases=phases)
             self.export_epoch_metrics(metric_names=metric_names, phases=phases)
+            self._dash_heartbeat()
         if self._step_metrics:
             self.save_step_metric_plots(metric_names=metric_names, phases=phases)
             self.export_step_metrics(metric_names=metric_names, phases=phases)
+            self._dash_heartbeat()
 
     @_require_setup
     def save_checkpoints(self) -> None:
@@ -2147,6 +2152,11 @@ class BaseTrainer(abc.ABC):
             return len(loader)
         except TypeError:
             return 0
+
+    def _dash_heartbeat(self) -> None:
+        """Refresh the dashboard liveness timestamp (no-op without a dashboard)."""
+        if self._dashboard is not None:
+            self._dashboard.heartbeat()
 
     def _dash_update(
         self,
