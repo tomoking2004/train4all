@@ -25,6 +25,7 @@ from torch.optim.lr_scheduler import LRScheduler, ReduceLROnPlateau
 from torch.utils.data import DataLoader
 from tqdm import tqdm
 
+from train4all.trainer.checkpoint import Checkpoint
 from train4all.utils import (
     Dashboard,
     DashboardConfig,
@@ -137,10 +138,11 @@ class BaseTrainer(abc.ABC):
     _LOG_FILENAME: str    = "log.txt"
     _CONFIG_FILENAME: str = "config.json"
 
-    # ── Checkpoint file stems and format version ──────────────────────────────
-    _CHECKPOINT_VERSION: str = "1.1"
-    _CHECKPOINT_LATEST: str  = "latest"
-    _CHECKPOINT_BEST: str    = "best"
+    # ── Checkpoint file stems ─────────────────────────────────────────────────
+    # The on-disk format itself lives in :class:`Checkpoint` (the schema and its
+    # version are owned there); these are only the file names under the run.
+    _CHECKPOINT_LATEST: str = "latest"
+    _CHECKPOINT_BEST: str   = "best"
 
     # ── Metrics file stems ────────────────────────────────────────────────────
     _METRICS_EPOCH: str = "epoch_metrics"
@@ -487,27 +489,30 @@ class BaseTrainer(abc.ABC):
             exc: The exception that aborted training.
         """
 
-    def on_save_checkpoint(self, checkpoint: dict[str, Any]) -> None:
+    def on_save_checkpoint(self, checkpoint: Checkpoint) -> None:
         """
-        Called while a full checkpoint dict is being built, before it is written.
+        Called while a full checkpoint is being built, before it is written.
 
-        Mutate ``checkpoint`` in place to persist custom state (the counterpart
-        of :meth:`on_load_checkpoint`). Not called for weights-only saves.
+        Attach custom state to persist by indexing ``checkpoint`` like a dict
+        (``checkpoint["ema"] = self.ema.state_dict()``) — the counterpart of
+        :meth:`on_load_checkpoint`. Not called for weights-only saves.
 
         Args:
-            checkpoint: The checkpoint dict about to be saved.
+            checkpoint: The :class:`Checkpoint` about to be saved.
         """
 
-    def on_load_checkpoint(self, checkpoint: dict[str, Any]) -> None:
+    def on_load_checkpoint(self, checkpoint: Checkpoint) -> None:
         """
-        Called after a full checkpoint has been restored, with the raw dict.
+        Called after a full checkpoint has been restored, with the loaded
+        :class:`Checkpoint`.
 
-        Use it to read back custom state written in :meth:`on_save_checkpoint`.
-        Extras from ``update_checkpoint_extras()`` restore automatically (read
-        them via :meth:`get_checkpoint_extras`). Not called for weights-only loads.
+        Read back custom state written in :meth:`on_save_checkpoint` by indexing
+        it (``checkpoint["ema"]``), or reach for its typed accessors. Extras from
+        ``update_checkpoint_extras()`` restore automatically (read them via
+        :meth:`get_checkpoint_extras`). Not called for weights-only loads.
 
         Args:
-            checkpoint: The checkpoint dict that was just loaded.
+            checkpoint: The :class:`Checkpoint` that was just loaded.
         """
 
     def on_train_epoch_start(self, epoch: int) -> None:
@@ -684,7 +689,7 @@ class BaseTrainer(abc.ABC):
         """
         if use_best:
             self.print()
-            self._load_best_checkpoint()
+            self.load_best_checkpoint()
 
         self.print("\n── Test Epoch\n")
         metrics = self._execute_epoch(test_loader, phase=self._TEST_PHASE, training=False)
@@ -764,7 +769,7 @@ class BaseTrainer(abc.ABC):
         self.ensure_setup()
 
         if self.resume and self.has_latest_checkpoint():
-            self._load_latest_checkpoint()
+            self.load_latest_checkpoint()
 
         self.print_model_summary()
         self.print_optimization_summary()
@@ -983,7 +988,7 @@ class BaseTrainer(abc.ABC):
             metric_names: Metrics to include. ``None`` includes all.
             phases: Phases to include. ``None`` includes all.
         """
-        self._save_checkpoints()
+        self.save_checkpoints()
         if self._epoch_metrics:
             self.save_epoch_metric_plots(metric_names=metric_names, phases=phases)
             self.export_epoch_metrics(metric_names=metric_names, phases=phases)
@@ -994,7 +999,19 @@ class BaseTrainer(abc.ABC):
     @_require_setup
     def save_checkpoints(self) -> None:
         """Save the latest, best, and periodic (if configured) checkpoints."""
-        self._save_checkpoints()
+        # No explicit mkdir: ``Checkpoint.save`` creates each destination's parent.
+        checkpoint = self._build_checkpoint()
+
+        latest_path = self.get_latest_checkpoint_path()
+        self._write_checkpoint(latest_path, checkpoint, f"💾 Latest checkpoint saved: {latest_path.name}")
+
+        if self.is_best_epoch():
+            best_path = self.get_best_checkpoint_path()
+            self._write_checkpoint(best_path, checkpoint, f"🏆 Best checkpoint saved: {best_path.name}")
+
+        if self.save_interval and self._current_epoch % self.save_interval == 0:
+            epoch_path = self.get_checkpoint_path(f"epoch_{self._current_epoch}")
+            self._write_checkpoint(epoch_path, checkpoint, f"💾 Epoch {self._current_epoch} checkpoint saved: {epoch_path.name}")
 
     @_require_setup
     def save_checkpoint(self, path: Path | str) -> None:
@@ -1005,7 +1022,7 @@ class BaseTrainer(abc.ABC):
             path: Destination file path.
         """
         path = Path(path)
-        self._save_torch(path, self._build_checkpoint(), f"💾 Checkpoint saved: {path.name}")
+        self._write_checkpoint(path, self._build_checkpoint(), f"💾 Checkpoint saved: {path.name}")
 
     @_require_setup
     def save_weights(self, path: Path | str) -> None:
@@ -1016,11 +1033,7 @@ class BaseTrainer(abc.ABC):
             path: Destination file path.
         """
         path = Path(path)
-        self._save_torch(
-            path,
-            self._build_checkpoint(weights_only=True),
-            f"💾 Model weights saved: {path.name}",
-        )
+        self._write_checkpoint(path, self._build_checkpoint(weights_only=True), f"💾 Model weights saved: {path.name}")
 
     def backup_checkpoint(self, path: Path | str) -> None:
         """
@@ -1052,9 +1065,7 @@ class BaseTrainer(abc.ABC):
             strict: Enforce exact key matching when loading model state dicts.
             key_map: Optional mapping to rename state-dict keys before loading.
         """
-        self.print("💾 Loading checkpoint ...")
-        self.print(f" {'─' * (self.key_width + self._SEPARATOR_PAD)}")
-        self._load_checkpoint(Path(path), strict=strict, key_map=key_map)
+        self._load_checkpoint(Path(path), "💾 Loading checkpoint", strict=strict, key_map=key_map)
 
     @_require_setup
     def load_weights(
@@ -1071,19 +1082,17 @@ class BaseTrainer(abc.ABC):
             strict: Enforce exact key matching.
             key_map: Optional mapping to rename state-dict keys before loading.
         """
-        self.print("💾 Loading model weights ...")
-        self.print(f" {'─' * (self.key_width + self._SEPARATOR_PAD)}")
-        self._load_checkpoint(Path(path), strict=strict, key_map=key_map, weights_only=True)
+        self._load_checkpoint(Path(path), "💾 Loading model weights", strict=strict, key_map=key_map, weights_only=True)
 
     @_require_setup
     def load_latest_checkpoint(self) -> None:
         """Load the most recently saved checkpoint."""
-        self._load_latest_checkpoint()
+        self._load_checkpoint(self.get_latest_checkpoint_path(), "💾 Loading latest checkpoint")
 
     @_require_setup
     def load_best_checkpoint(self) -> None:
         """Load the checkpoint from the best validation epoch."""
-        self._load_best_checkpoint()
+        self._load_checkpoint(self.get_best_checkpoint_path(), "🏆 Loading best checkpoint")
 
     def exclude_from_checkpoint(self, names: str | list[str]) -> None:
         """
@@ -1761,57 +1770,69 @@ class BaseTrainer(abc.ABC):
     def _is_training_phase(self, phase: str) -> bool:
         return phase in self.training_phases
 
-    # ── Internal: Checkpoints ─────────────────────────────────────────────────
+    # ── Internal: Checkpoints (save) ──────────────────────────────────────────
 
-    def _save_torch(self, path: Path, data: Any, success_msg: str) -> None:
-        path.parent.mkdir(parents=True, exist_ok=True)
+    def _build_checkpoint(self, weights_only: bool = False) -> Checkpoint:
+        # ``Checkpoint`` owns the schema; a weights-only checkpoint is just
+        # models + extras, so the training components are never even assembled.
+        models = {
+            k: v.state_dict()
+            for k, v in self._models.items()
+            if k not in self._ckpt_excludes
+        }
+        extras = dict(self._ckpt_extras)
+        if weights_only:
+            return Checkpoint.build(models=models, extras=extras, weights_only=True)
+
+        checkpoint = Checkpoint.build(
+            models=models,
+            extras=extras,
+            optimizer=self._optimizer.state_dict() if self._optimizer else None,
+            scheduler=self._scheduler.state_dict() if self._scheduler else None,
+            scaler=self._scaler.state_dict(),
+            training_state={
+                "current_epoch":     self._current_epoch,
+                "best_metric":       self._best_metric,
+                "best_epoch":        self._best_epoch,
+                "epochs_no_improve": self._epochs_no_improve,
+            },
+            metrics={
+                "epoch_metrics": self._epoch_metrics,
+                "step_metrics":  self._step_metrics,
+            },
+        )
+        # Subclasses attach custom state to full checkpoints only;
+        # the weights-only path already returned.
+        self.on_save_checkpoint(checkpoint)
+        return checkpoint
+
+    def _write_checkpoint(self, path: Path, checkpoint: Checkpoint, success_msg: str) -> None:
+        """Write *checkpoint* to *path*, logging *success_msg* or a warning on failure."""
         try:
-            torch.save(data, path)
+            checkpoint.save(path)
             self.print(success_msg)
         except Exception as e:
             self.print(f"Failed to save {path.name}: {e}", level="warn")
 
-    def _save_checkpoints(self) -> None:
-        # No explicit mkdir: ``_save_torch`` creates each destination's parent.
-        checkpoint = self._build_checkpoint()
-
-        latest_path = self.get_latest_checkpoint_path()
-        self._save_torch(latest_path, checkpoint, f"💾 Latest checkpoint saved: {latest_path.name}")
-
-        if self.is_best_epoch():
-            best_path = self.get_best_checkpoint_path()
-            self._save_torch(best_path, checkpoint, f"🏆 Best checkpoint saved: {best_path.name}")
-
-        if self.save_interval and self._current_epoch % self.save_interval == 0:
-            epoch_path = self.get_checkpoint_path(f"epoch_{self._current_epoch}")
-            self._save_torch(epoch_path, checkpoint, f"💾 Epoch {self._current_epoch} checkpoint saved: {epoch_path.name}")
-
-    def _load_named_checkpoint(self, label: str, path: Path) -> None:
-        """Print a labeled header then load a checkpoint from *path*."""
-        self.print(f"{label} ...")
-        self.print(f" {'─' * (self.key_width + self._SEPARATOR_PAD)}")
-        self._load_checkpoint(path)
-
-    def _load_latest_checkpoint(self) -> None:
-        self._load_named_checkpoint("💾 Loading latest checkpoint", self.get_latest_checkpoint_path())
-
-    def _load_best_checkpoint(self) -> None:
-        self._load_named_checkpoint("🏆 Loading best checkpoint", self.get_best_checkpoint_path())
+    # ── Internal: Checkpoints (load) ──────────────────────────────────────────
 
     def _load_checkpoint(
         self,
         path: Path | str,
+        label: str,
         strict: bool = False,
         key_map: dict[str, str] | None = None,
         weights_only: bool = False,
     ) -> None:
-        checkpoint = self._torch_load(path)
-        if not checkpoint:
+        self.print(f"{label} ...")
+        self.print(f" {'─' * (self.key_width + self._SEPARATOR_PAD)}")
+        ckpt = self._read_checkpoint(path)
+        if not ckpt:
             return
 
         loaded: dict[str, str] = {}
 
-        for name, state_dict in checkpoint.get("models", {}).items():
+        for name, state_dict in ckpt.models.items():
             status = self._load_model_state_dict(
                 model=self._models.get(name),
                 name=name,
@@ -1824,40 +1845,37 @@ class BaseTrainer(abc.ABC):
 
         # Extras ride along with both full and weights-only checkpoints (see
         # ``_build_checkpoint``), so they round-trip on either load.
-        extras = checkpoint.get("extras")
-        if extras:
-            self._ckpt_extras.update(extras)
+        if ckpt.extras:
+            self._ckpt_extras.update(ckpt.extras)
             loaded["extras"] = "restored"
 
         if not weights_only:
-            # Optimizer, scheduler, and scaler share one load-and-record path;
-            # each key doubles as the checkpoint key and the status label.
-            for name, obj in {
-                "optimizer": self._optimizer,
-                "scheduler": self._scheduler,
-                "scaler":    self._scaler,
-            }.items():
-                status = self._load_state_dict(obj, name, checkpoint.get(name))
+            # Optimizer, scheduler, and scaler share one load-and-record path.
+            for name, obj, state in (
+                ("optimizer", self._optimizer, ckpt.optimizer_state),
+                ("scheduler", self._scheduler, ckpt.scheduler_state),
+                ("scaler",    self._scaler,    ckpt.scaler_state),
+            ):
+                status = self._load_state_dict(obj, name, state)
                 if status is not None:
                     loaded[name] = status
 
-            ts = checkpoint.get("training_state", {})
-            self._current_epoch     = ts.get("current_epoch", self._current_epoch)
-            # ``best_metric``/``best_epoch`` are the current keys; fall back to the
-            # legacy ``best_val_loss``/``best_val_epoch`` so older checkpoints load.
-            self._best_metric       = ts.get("best_metric", ts.get("best_val_loss",  self._best_metric))
-            self._best_epoch        = ts.get("best_epoch",  ts.get("best_val_epoch", self._best_epoch))
+            # ``Checkpoint.training_state`` already normalizes legacy key names,
+            # so older checkpoints restore through the canonical fields here.
+            ts = ckpt.training_state
+            self._current_epoch     = ts.get("current_epoch",     self._current_epoch)
+            self._best_metric       = ts.get("best_metric",       self._best_metric)
+            self._best_epoch        = ts.get("best_epoch",        self._best_epoch)
             self._epochs_no_improve = ts.get("epochs_no_improve", self._epochs_no_improve)
             loaded["training_state"] = "restored"
 
-            saved_metrics = checkpoint.get("metrics", {})
-            self._epoch_metrics = saved_metrics.get("epoch_metrics", self._epoch_metrics)
-            self._step_metrics  = saved_metrics.get("step_metrics",  self._step_metrics)
+            self._epoch_metrics = ckpt.metrics.get("epoch_metrics", self._epoch_metrics)
+            self._step_metrics  = ckpt.metrics.get("step_metrics",  self._step_metrics)
             loaded["metrics"] = "restored"
 
-            # Let subclasses restore any custom state from the raw full
+            # Let subclasses restore any custom state from the loaded
             # checkpoint (the counterpart of ``on_save_checkpoint``).
-            self.on_load_checkpoint(checkpoint)
+            self.on_load_checkpoint(ckpt)
 
         print_dict_tree(
             loaded,
@@ -1865,6 +1883,17 @@ class BaseTrainer(abc.ABC):
             key_width=self.key_width,
             print_fn=self.print,
         )
+
+    def _read_checkpoint(self, path: Path | str) -> Checkpoint | None:
+        """Read the checkpoint at *path*, or return ``None`` (logging a warning) on failure."""
+        try:
+            return Checkpoint.load(path, map_location=self.device)
+        except FileNotFoundError:
+            self.print(f"Checkpoint not found: {path}", level="warn")
+        except Exception as e:
+            self.print(f"Failed to load checkpoint '{path}': {e}", level="warn")
+        self.print()
+        return None
 
     def _load_model_state_dict(
         self,
@@ -1908,49 +1937,6 @@ class BaseTrainer(abc.ABC):
         except Exception as e:
             self.print(f"{name}: failed to load ({e})", level="warn", indent=2)
             return f"failed ({e})"
-
-    def _torch_load(self, path: Path | str) -> dict[str, Any] | None:
-        try:
-            return torch.load(path, map_location=self.device, weights_only=False)
-        except FileNotFoundError:
-            self.print(f"File not found: {path}", level="warn")
-        except RuntimeError as e:
-            self.print(f"Load error: {e}", level="warn")
-        except Exception as e:
-            self.print(f"Unexpected error while loading '{path}': {e}", level="warn")
-        self.print()
-        return None
-
-    def _build_checkpoint(self, weights_only: bool = False) -> dict[str, Any]:
-        checkpoint: dict[str, Any] = {
-            "version": self._CHECKPOINT_VERSION,
-            "models": {
-                k: v.state_dict()
-                for k, v in self._models.items()
-                if k not in self._ckpt_excludes
-            },
-            "extras": dict(self._ckpt_extras),
-        }
-        if not weights_only:
-            checkpoint.update({
-                "optimizer": self._optimizer.state_dict() if self._optimizer else None,
-                "scheduler": self._scheduler.state_dict() if self._scheduler else None,
-                "scaler": self._scaler.state_dict(),
-                "training_state": {
-                    "current_epoch":     self._current_epoch,
-                    "best_metric":       self._best_metric,
-                    "best_epoch":        self._best_epoch,
-                    "epochs_no_improve": self._epochs_no_improve,
-                },
-                "metrics": {
-                    "epoch_metrics": self._epoch_metrics,
-                    "step_metrics":  self._step_metrics,
-                },
-            })
-            # Let subclasses inject custom state into the full checkpoint dict;
-            # weights-only saves stay pure (models + extras) by design.
-            self.on_save_checkpoint(checkpoint)
-        return checkpoint
 
     # ── Internal: Metrics ─────────────────────────────────────────────────────
 

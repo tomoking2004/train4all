@@ -20,7 +20,7 @@ train4all is a minimal PyTorch training framework. Subclass `BaseTrainer`, imple
 - **Zero boilerplate** — one subclass, three methods, full training loop
 - **Mixed precision** — automatic bf16 AMP on CUDA by default for lower VRAM and faster steps; opt into `"fp16"` for older cards or disable with `amp=False`. TF32 + cuDNN autotuner switch on automatically for unseeded runs (`tf32`)
 - **Scale on small GPUs** — gradient accumulation (`accumulation_steps`) simulates a larger effective batch at no extra memory cost, and per-model `torch.compile` (`compile=True`) unlocks graph-level speedups
-- **Automatic checkpointing** — `latest.pth` and `best.pth` saved after every epoch; periodic saves every N epochs
+- **Automatic checkpointing** — `latest.pth` and `best.pth` saved after every epoch; periodic saves every N epochs, plus a standalone `Checkpoint` reader to inspect any file with no model or subclass
 - **Early stopping** — patience-based on any `monitor` metric (`min`/`max` mode), with automatic best-checkpoint tracking
 - **Live web dashboard** — a self-contained, dependency-free panel: progress gauge, live KPIs, per-step loss graph, per-metric charts, light & dark themes
 - **Flexible metrics** — epoch- and step-level recording, JSON export, matplotlib curve plots
@@ -47,6 +47,7 @@ train4all is a minimal PyTorch training framework. Subclass `BaseTrainer`, imple
     - [Step Cache](#step-cache)
     - [Checkpointing](#checkpointing)
       - [Persisting custom state: `extras` vs. hooks](#persisting-custom-state-extras-vs-hooks)
+      - [Inspecting a checkpoint](#inspecting-a-checkpoint)
     - [Metrics](#metrics)
       - [Weighted averaging](#weighted-averaging)
     - [Custom Training Loop](#custom-training-loop)
@@ -277,8 +278,8 @@ def on_after_backward(self) -> None: ...                              # before u
 def on_before_optimizer_step(self) -> None: ...                       # after unscale/clip, before optimizer.step()
 
 # Checkpoint (full checkpoints only, not weights-only)
-def on_save_checkpoint(self, checkpoint: dict[str, Any]) -> None: ... # mutate dict to persist custom state
-def on_load_checkpoint(self, checkpoint: dict[str, Any]) -> None: ... # read it back after restore
+def on_save_checkpoint(self, checkpoint: Checkpoint) -> None: ...      # attach custom state (checkpoint["ema"] = ...)
+def on_load_checkpoint(self, checkpoint: Checkpoint) -> None: ...      # read it back after restore
 ```
 
 A few timing guarantees worth knowing:
@@ -361,6 +362,28 @@ def on_save_checkpoint(self, checkpoint):
 def on_load_checkpoint(self, checkpoint):
     if "ema" in checkpoint:
         self.ema.load_state_dict(checkpoint["ema"])
+```
+
+The hook receives a [`Checkpoint`](#inspecting-a-checkpoint): index it like a dict (`checkpoint["ema"]`, `"ema" in checkpoint`) or reach for its typed accessors.
+
+#### Inspecting a checkpoint
+
+`Checkpoint` reads a saved file and exposes its contents — **no model, no subclass, no abstract methods**. It is also the single source of truth for the on-disk format, so a trainer and an inspector never disagree about the schema.
+
+```python
+from train4all import Checkpoint
+
+ckpt = Checkpoint.load("run/checkpoints/best.pth")   # map_location="cpu" by default
+ckpt.print_summary()                  # tree: version, models + param counts, components, training state, metrics
+
+ckpt.version                          # on-disk format version
+ckpt.models["encoder"]                # a raw state dict — no architecture required
+ckpt.model_summary()                  # {name: {"parameters": int, "tensors": int}}
+ckpt.training_state["best_epoch"]     # legacy key names normalized automatically
+ckpt.extras                           # custom metadata embedded via update_checkpoint_extras()
+ckpt.metrics                          # recorded {"epoch_metrics": ..., "step_metrics": ...}
+ckpt.optimizer_state                  # None for a weights-only checkpoint
+ckpt.raw                              # the underlying dict, for anything not surfaced above
 ```
 
 ---
