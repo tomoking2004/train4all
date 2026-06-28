@@ -15,11 +15,12 @@ A quiet, Apple-like instrument panel: one centred column, frosted-glass cards
 over soft ambient colour, hairline rules, and a single state-driven accent.
 
 A large progress gauge anchors the page — concentric rings (outer = overall
-run, inner = the live phase's steps, turning gold once the run completes) with
-the overall percentage at its centre, epoch divider ticks, and a gold ★
-best-epoch marker on its rim. Run progress is strictly monotonic: train and
-validation steps both advance it proportionally, it never rewinds across a
-phase or epoch boundary, and it holds full once the run completes.
+run, gold once the run completes; inner = the live phase's steps, gold in the
+gaps between phases and blank once the run ends) with the overall percentage at
+its centre, epoch divider ticks, and a gold ★ best-epoch marker on its rim. Run
+progress is strictly monotonic: train and validation steps both advance it
+proportionally, it never rewinds across a phase or epoch boundary, and it holds
+full once the run completes.
 
 The gauge is flanked by a uniform KPI grid (current metric, best monitored
 value, throughput, ETA, learning rate, and a GPU-memory cell whose bar turns
@@ -42,7 +43,8 @@ validation purple, test pink — so curves, legends, the phase badge, the inner
 gauge ring, and the state accents always agree. Red means offline (a plateau
 keeps the training blue — the gold ★ carries that signal); gold is reserved for
 excellence (best epoch, completed run). No green. A fixed hairline across the
-top of the viewport mirrors overall progress in the same spectrum.
+top of the viewport mirrors overall progress in the same spectrum, and turns
+gold once the run completes.
 
 Configuration, environment, and model tables close the page — nested-dict
 config opens indented sub-groups; click any row to copy its value (a gold flash
@@ -664,11 +666,13 @@ body::before {
 }
 
 /* overall run progress — a fixed hairline across the top of the viewport.
-   The eight-colour spectrum is anchored to the viewport, so the line
-   reveals more of the gradient as the run advances. */
+   The eight-colour spectrum is anchored to the viewport, so the line reveals
+   more of the gradient as the run advances; it turns gold on completion to
+   match the gauge's outer ring. */
 .runline { position: fixed; top: 0; left: 0; height: 2px; width: 0%;
   background-image: var(--spectrum); background-size: 100vw 100%; background-repeat: no-repeat;
   z-index: 100; transition: width 0.6s var(--ease); }
+.runline.done { background-image: none; background-color: var(--st-completed); }
 
 /* fills the viewport on any display — only a hairline-thin breathing margin */
 .app { max-width: none; margin: 0 auto; padding: 0 clamp(20px, 3vw, 56px) 64px;
@@ -748,7 +752,8 @@ body::before {
 .g-ring { stroke-linecap: round;
   transition: stroke-dashoffset 0.6s var(--ease), stroke 0.5s var(--ease), opacity 0.3s var(--ease); }
 .g-ring.run  { stroke: url(#ringGrad); stroke-width: 13; }
-.g-ring.step { stroke: var(--phasecol); stroke-width: 7; }  /* phase colour while running, gold once complete */
+.g-ring.run.done { stroke: var(--st-completed); }           /* the whole run is complete — crown the outer ring gold */
+.g-ring.step { stroke: var(--phasecol); stroke-width: 7; }  /* live phase's steps; gold in the gap between phases, blank at run end */
 /* epoch divider ticks ringing the gauge, and the gold best-epoch ★ */
 .g-tick { stroke: var(--line-2); stroke-width: 1.5; stroke-linecap: round; }
 .g-best { fill: var(--gold); font-size: 14px; font-weight: 700; text-anchor: middle;
@@ -1775,19 +1780,22 @@ document.addEventListener('DOMContentLoaded', function () {
     const E = d.max_epoch || 0, completed = Math.max(d.current_epoch || 0, 1) - 1;
     const overall = done ? 1 : (E ? clamp((completed + prog.epFrac) / E, 0, 1) : 0);
 
-    /* phase colour drives the inner ring. While running it tracks the live
-       phase (train blue / val purple) and holds through inter-phase gaps so a
-       finished phase reads as complete; at standby (before any epoch) it is a
-       neutral grey so the ring is never spuriously blue; and on completion it
-       turns gold to match the run's note of excellence. */
-    if (done) prog.phaseCol = 'var(--st-completed)';
-    else if (active) prog.phaseCol = grad ? 'var(--st-training)' : 'var(--st-validating)';
-    else if (!(d.current_epoch > 0)) prog.phaseCol = 'var(--st-idle)';
+    /* phase colour drives the inner step ring. While running it tracks the live
+       phase (train blue / val purple); once a phase's steps finish it turns gold
+       and holds full through the gap before the next phase — a small note of
+       completion — and at standby (before any epoch) it is a neutral grey. On run
+       completion the inner ring is blanked entirely; the gold crown moves to the
+       outer run ring instead. */
+    if (active) prog.phaseCol = grad ? 'var(--st-training)' : 'var(--st-validating)';
+    else if (prog.ran) prog.phaseCol = 'var(--st-completed)';   /* steps done, between phases → gold */
+    else prog.phaseCol = 'var(--st-idle)';
     document.documentElement.style.setProperty('--phasecol', prog.phaseCol);
 
     el('run-line').style.width = (overall * 100).toFixed(2) + '%';
+    el('run-line').classList.toggle('done', done);   /* the overall-run hairline goes gold to match the gauge */
+    el('ring-run').classList.toggle('done', done);   /* crown the overall-run ring gold at completion */
     setRing('ring-run', RING_RUN_C, overall);
-    setRing('ring-step', RING_STEP_C, done ? 1 : prog.stepFrac);
+    setRing('ring-step', RING_STEP_C, done ? 0 : prog.stepFrac);   /* inner ring is the live phase only — blank when done */
     tween(el('ov-pct'), Math.round(overall * 100), (v) => String(Math.round(v)));
     setText('ov-label', done ? 'Complete' : 'Overall');
     updateGauge(d);
