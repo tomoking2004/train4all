@@ -9,6 +9,12 @@
 
 **Implement three methods. Get a complete training loop.**
 
+<picture>
+  <source media="(prefers-color-scheme: dark)"  srcset="assets/dashboard-dark.png">
+  <source media="(prefers-color-scheme: light)" srcset="assets/dashboard-light.png">
+  <img alt="train4all live training dashboard" src="assets/dashboard-dark.png" width="100%">
+</picture>
+
 </div>
 
 ---
@@ -114,6 +120,12 @@ trainer = MyTrainer(num_epochs=5, learning_rate=1e-3, run_dir="run", use_dashboa
 trainer.train(make_loader(100_000), val_loader=make_loader(20_000))
 trainer.test(make_loader(10_000), use_best=True)
 ```
+
+Running it opens the [live dashboard](#live-dashboard) and streams a clean console log — a reproducibility banner (environment, resolved config, model), then a per-phase metric table and automatic checkpoint saves on every epoch:
+
+<div align="center">
+  <img alt="train4all console output — reproducibility banner and the first epoch" src="assets/logs.png" width="62%">
+</div>
 
 ---
 
@@ -509,6 +521,10 @@ trainer.clear_cuda_cache()       # gc.collect() + torch.cuda.empty_cache()
 ## Live Dashboard
 
 Pass `use_dashboard=True` for a live, dependency-free dashboard in your browser: an overall-progress gauge, a KPI grid (loss, best validation, throughput, ETA, learning rate, GPU memory), a live per-step loss graph, and a per-metric SVG chart for each metric. It follows your light/dark theme and embeds its data inline so it stays viewable offline.
+
+<div align="center">
+  <img alt="train4all dashboard — a completed run" src="assets/dashboard-complete.png" width="100%">
+</div>
 
 > **Remote training** works headless and reports the remote GPU. From an editor (VS Code Remote-SSH, Dev Containers, WSL) it opens in your **local** browser automatically; over plain SSH, set `open_on_start=False` and forward the printed port (`ssh -L 8080:127.0.0.1:<printed-port> …`).
 
