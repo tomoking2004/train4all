@@ -131,7 +131,7 @@ Running it opens the [live dashboard](#live-dashboard) and streams a clean conso
 
 ## Constructor Parameters
 
-Every parameter is optional, and all except `num_epochs` are **keyword-only**, so order never matters and the table can be reordered freely. The saved config records **only the reproducibility-relevant arguments you actually customized** — anything left at its default is omitted — and unpacks straight back in: `MyTrainer(**trainer._config)` restores those settings. The **resolved `device`** is also pinned (e.g. `"cuda:0"`), so a reload targets the same hardware for exact reproduction and fails loudly on a host that lacks it; purely operational args like `run_dir` are omitted and fall back to their defaults.
+Every parameter is optional, and all except `num_epochs` are **keyword-only**, so order never matters and the table can be reordered freely. The saved config records **only the reproducibility-relevant arguments you actually customized** — anything left at its default is omitted — and unpacks straight back in: [`MyTrainer.from_config("run")`](#configuration) reconstructs the trainer from the saved `config.json`. The **resolved `device`** is also pinned (e.g. `"cuda:0"`), so a reload targets the same hardware for exact reproduction and fails loudly on a host that lacks it (pass `device=` to retarget); purely operational args like `run_dir` are omitted and fall back to their defaults.
 
 | Parameter | Default | Description |
 | :-- | :-- | :-- |
@@ -150,18 +150,18 @@ Every parameter is optional, and all except `num_epochs` are **keyword-only**, s
 | `seed` | `None` | Global random seed for Python, NumPy, and PyTorch. |
 | `run_dir` | `"run"` | Output directory for checkpoints, metrics, logs, and plots. |
 | `run_snapshot_dir` | `None` | Mirror directory for a lightweight copy of `run_dir` via `snapshot_run()`. |
-| `resume` | `True` | Resume from `latest.pth` at the start of training. |
+| `resume` | `True` | Resume from `latest.pth` at the start of training. When `False`, `prepare_training()` first clears the run's previous artifacts (`checkpoints/`, `metrics/`, `plots/`, and dashboard files) and starts a fresh log, so a fresh run never inherits stale files — `config.json` and any user files in `run_dir` are kept, and evaluation-only flows (calling `test()` without training) are unaffected. |
 | `save_interval` | `None` | Save a periodic checkpoint every N epochs. |
 | `record_step_metrics` | `False` | Record per-step metrics during training phases. |
 | `step_metric_names` | `None` | Subset of metric names to record at the step level. `None` records all. |
 | `pbar_metric_names` | `None` | Metric names shown in the tqdm postfix. `None` hides all metrics (GPU memory still shown on CUDA). |
 | `use_progress_bar` | `True` | Show tqdm progress bars during epoch iteration. |
-| `keep_progress_bar` | `False` | Persist progress bars after each epoch completes. |
-| `key_width` | `32` | Column width for printed metric and summary tables. |
 | `debug_mode` | `False` | Enable debug-level logging. |
 | `logger` | `None` | Any object satisfying the `TrainerLogger` protocol (a `log()` method); a default `UnifiedLogger` is created if `None`. |
 | `use_dashboard` | `False` | Enable the live web dashboard. |
 | `dashboard_config` | `None` | Dashboard appearance and behaviour (`DashboardConfig`). |
+
+Purely cosmetic display settings are **class constants** rather than constructor arguments — set once per trainer type, not per run, so override them in your subclass: `_KEY_WIDTH` (column width for printed metric/summary tables, default `32`) and `_KEEP_PROGRESS_BAR` (keep tqdm bars on screen after each epoch, default `False`).
 
 ---
 
@@ -216,7 +216,7 @@ Run the full training loop. Calls `prepare_training()` first, then iterates epoc
 metrics: dict[str, float] = trainer.test(test_loader, use_best=True)
 ```
 
-Evaluate on a held-out test set. When `use_best=True`, loads `best.pth` before running — use this for final reporting after `train()` completes. Per-step metrics come from `compute_test_metrics` (see above), so override it to report test-only metrics.
+Evaluate on a held-out test set. When `use_best=True`, loads the best **weights** from `best.pth` before running — use this for final reporting after `train()` completes. Only the weights are loaded, so evaluation never rewinds the epoch counter or truncates the recorded metric history to the best epoch (call `load_best_checkpoint()` for that deliberate full rewind). Per-step metrics come from `compute_test_metrics` (see above), so override it to report test-only metrics.
 
 ---
 
@@ -332,7 +332,8 @@ trainer.backup_checkpoint("run/checkpoints/latest.pth")   # copy with .bak suffi
 
 # Loading
 trainer.load_latest_checkpoint()                          # load checkpoints/latest.pth
-trainer.load_best_checkpoint()                            # load checkpoints/best.pth
+trainer.load_best_checkpoint()                            # full restore — rewinds to the best epoch
+trainer.load_best_weights()                               # best weights only — no rewind (test uses this)
 trainer.load_checkpoint("run/my_checkpoint.pth")          # full checkpoint from any path
 trainer.load_weights("run/weights_only.pth")              # weights only, skip optimizer state
 
@@ -468,7 +469,7 @@ for i, batch in enumerate(train_loader, 1):
 ### State Inspection
 
 ```python
-trainer.is_training_completed()      # True when current_epoch >= num_epochs
+trainer.is_training_complete()       # True when current_epoch >= num_epochs
 trainer.is_best_epoch()              # True if this epoch set the best monitored value
 trainer.should_stop_early()          # True if patience is exhausted
 
@@ -489,6 +490,15 @@ trainer.save_config()
 
 path = trainer.get_config_path()     # run/config.json
 ```
+
+`config.json` is the one run artifact that lives *outside* the checkpoint — everything else (metrics, plots) reconstructs from the `.pth`. `from_config` is its inverse, rebuilding an equivalently configured trainer straight from the file:
+
+```python
+trainer = MyTrainer.from_config("run")                # or "run/config.json"
+trainer = MyTrainer.from_config("run", device="cpu")  # overrides replace file values
+```
+
+Only `BaseTrainer` constructor arguments are consumed, so custom metadata added via `update_config` is ignored; a subclass's own constructor arguments (model hyperparameters, …) are not in the base config and must be passed as overrides.
 
 ---
 
@@ -513,7 +523,7 @@ trainer.snapshot_run(exclude=["checkpoints"])
 
 ```python
 trainer.print_gpu_temperature()  # reads temperature via nvidia-smi; warns above 85 °C
-trainer.clear_cuda_cache()       # gc.collect() + torch.cuda.empty_cache()
+trainer.empty_cuda_cache()       # gc.collect() + torch.cuda.empty_cache()
 ```
 
 ---

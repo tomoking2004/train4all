@@ -14,7 +14,7 @@ from collections.abc import Callable, Iterator
 from datetime import datetime
 from functools import wraps
 from pathlib import Path
-from typing import Any, TypeAlias, TypeVar
+from typing import Any, Self
 
 import numpy as np
 import psutil
@@ -37,18 +37,18 @@ from train4all.utils import (
     get_metric_plot_filename,
     get_metric_plot_title,
     print_dict_tree,
+    remove_dir,
     replace_dict_keys,
     save_curves_plot,
 )
 
 __all__ = ["BaseTrainer"]
 
-ModuleSpec: TypeAlias = str | nn.Module | list[str | nn.Module]
-_Scheduler: TypeAlias = LRScheduler | ReduceLROnPlateau
-_F = TypeVar("_F", bound=Callable[..., Any])
+type ModuleSpec = str | nn.Module | list[str | nn.Module]
+type _Scheduler = LRScheduler | ReduceLROnPlateau
 
 
-def _require_setup(func: _F) -> _F:
+def _require_setup[F: Callable[..., Any]](func: F) -> F:
     """Ensure ``setup()`` has been called before the decorated method runs."""
     @wraps(func)
     def wrapper(self: Any, *args: Any, **kwargs: Any) -> Any:
@@ -109,17 +109,16 @@ class BaseTrainer(abc.ABC):
             Auto-detected when ``None`` — prefers CUDA, then MPS, then CPU.
             On a multi-GPU machine, select a specific GPU with ``"cuda:<index>"``.
         seed: Random seed for reproducibility. Disabled if ``None``.
-        run_dir: Output directory for checkpoints, metrics, and logs.
+        run_dir: Output directory for checkpoints, metrics, logs, and plots.
         run_snapshot_dir: Directory for a lightweight snapshot copy of ``run_dir``.
             Snapshotting is disabled when ``None``.
         resume: Resume from the latest checkpoint at the start of training.
         save_interval: Save a periodic checkpoint every *N* epochs.
         record_step_metrics: Record per-step metrics during training phases.
         step_metric_names: Step metric names to record. ``None`` records all.
-        pbar_metric_names: Metric names shown in the tqdm postfix. ``None`` hides all.
+        pbar_metric_names: Metric names shown in the tqdm postfix. ``None`` hides all
+            metrics; GPU memory is always shown on CUDA regardless.
         use_progress_bar: Show tqdm progress bars during epoch iteration.
-        keep_progress_bar: Persist progress bars after an epoch completes.
-        key_width: Column width used when printing metric and summary tables.
         debug_mode: Enable debug-level logging (forwarded to the logger).
         logger: Any object satisfying the :class:`TrainerLogger` protocol.
             A default ``UnifiedLogger`` is created if ``None``.
@@ -159,10 +158,12 @@ class BaseTrainer(abc.ABC):
     _GPU_TEMP_WARN_C: int = 85   # warn above this GPU temperature (°C)
     _GPU_MEM_TTL_S: float = 2.0  # cache nvidia-smi memory reads for this long
 
-    # ── Console / dashboard tunables ──────────────────────────────────────────
-    _SEPARATOR_PAD: int       = 48   # separator rule width = key_width + this pad
-    _DASH_THROTTLE_S: float   = 0.5  # minimum seconds between dashboard step writes
-    _DASH_EXTRA_WAIT_S: float = 0.5  # extra wait after dashboard finalize
+    # ── Console / display tunables ────────────────────────────────────────────
+    _KEY_WIDTH: int           = 32     # column width for printed metric / summary tables
+    _KEEP_PROGRESS_BAR: bool  = False  # persist tqdm bars after an epoch completes
+    _SEPARATOR_PAD: int       = 48     # separator rule width = _KEY_WIDTH + this pad
+    _DASH_THROTTLE_S: float   = 0.5    # minimum seconds between dashboard step writes
+    _DASH_EXTRA_WAIT_S: float = 0.5    # extra wait after dashboard finalize
 
     def __init__(
         self,
@@ -188,8 +189,6 @@ class BaseTrainer(abc.ABC):
         step_metric_names: list[str] | None = None,
         pbar_metric_names: list[str] | None = None,
         use_progress_bar: bool = True,
-        keep_progress_bar: bool = False,
-        key_width: int = 32,
         debug_mode: bool = False,
         logger: TrainerLogger | None = None,
         use_dashboard: bool = False,
@@ -239,8 +238,6 @@ class BaseTrainer(abc.ABC):
 
         # ── Display / logging ─────────────────────────────────────────────────
         self.use_progress_bar = use_progress_bar
-        self.keep_progress_bar = keep_progress_bar
-        self.key_width = key_width
         self.debug_mode = debug_mode
         self.logger = logger or self._create_default_logger()
 
@@ -281,15 +278,17 @@ class BaseTrainer(abc.ABC):
         self._gpu_mem_cache: tuple[int, int, int] = (0, 0, 0)
         self._gpu_mem_cache_t: float = 0.0
 
-        # ── Derived initialization (depends on the attributes set above) ──────
-        self._init_amp(amp)  # needs ``device`` and ``logger``
-        if seed is not None:
-            self._set_seed(seed)  # needs ``device``
-        self._init_tf32(tf32)  # needs ``device`` and ``seed``; runs after _set_seed
+        # ── Internal: AMP / TF32 state (depends on the attributes set above) ──
+        # Each resolved from self.amp / self.tf32 and assigned exactly once here.
+        # _init_tf32 runs after reset_seed, whose cuDNN determinism flags it may
+        # relax.
+        self._amp_enabled, self._amp_dtype, self._scaler = self._init_amp()
+        self.reset_seed()  # applies self.seed to the RNGs when set
+        self._tf32_enabled = self._init_tf32()
 
         # Reproducibility config — only the arguments the caller actually
         # customized (anything left at its default is omitted), so the saved
-        # config is minimal and round-trips via ``MyTrainer(**config)``.
+        # config is minimal and round-trips via :meth:`from_config`.
         self._config: dict[str, Any] = self._customized_config({
             "num_epochs": num_epochs,
             "batch_size": batch_size,
@@ -307,12 +306,20 @@ class BaseTrainer(abc.ABC):
         # Record the *resolved* device unconditionally (not via the filter
         # above): a raw ``device=None`` would be dropped and re-resolved
         # differently on another host, so pinning it keeps reproduction exact —
-        # ``MyTrainer(**config)`` then fails loudly on a host that lacks it.
+        # ``from_config`` then fails loudly on a host that lacks it (pass
+        # ``device=`` to retarget).
         self._config["device"] = str(self.device)
 
-        cfg = dashboard_config or DashboardConfig()
+        dashboard_config = dashboard_config or DashboardConfig()
         self._dashboard: Dashboard | None = (
-            Dashboard(cfg, self.run_dir) if use_dashboard and cfg.enabled else None
+            Dashboard(dashboard_config, self.run_dir)
+            if use_dashboard and dashboard_config.enabled else None
+        )
+        # Tracked even when the dashboard is disabled, so a fresh run can delete a
+        # previous run's dashboard files (see ``clear_artifacts``).
+        self._dashboard_files: tuple[Path, ...] = (
+            self.run_dir / dashboard_config.filename,
+            self.run_dir / dashboard_config.data_filename,
         )
 
     # ── Abstract Methods ──────────────────────────────────────────────────────
@@ -607,7 +614,7 @@ class BaseTrainer(abc.ABC):
         self._require_num_epochs()
         self.prepare_training()
 
-        if self.is_training_completed():
+        if self.is_training_complete():
             self.print("\n⏹️  Training already completed.\n")
             return
 
@@ -623,7 +630,7 @@ class BaseTrainer(abc.ABC):
                 level="warn",
             )
 
-        self._init_dashboard(train_loader, val_loader)
+        self._dash_init(train_loader, val_loader)
 
         start_time = datetime.now()
         self.print(f"\n🚀 Training started at {start_time:%Y-%m-%d %H:%M:%S}\n")
@@ -669,8 +676,8 @@ class BaseTrainer(abc.ABC):
 
         self.on_training_end()
         duration = datetime.now() - start_time
-        self._finalize_dashboard()
-        self.clear_cuda_cache()
+        self._dash_finalize()
+        self.empty_cuda_cache()
         self.print(f"\n✅ Training completed. Duration: {str(duration).split('.')[0]}\n")
 
     @_require_setup
@@ -687,21 +694,25 @@ class BaseTrainer(abc.ABC):
 
         Args:
             test_loader: DataLoader for test data.
-            use_best: Load the best checkpoint before evaluating.
+            use_best: Load the best **weights** before evaluating. Only the
+                weights are loaded — evaluation never restores the training
+                state or metric history, so it cannot rewind the epoch counter
+                or truncate the recorded metrics to the best epoch (use
+                :meth:`load_best_checkpoint` to deliberately rewind to best).
 
         Returns:
             Mapping of metric name to value.
         """
         if use_best:
             self.print()
-            self.load_best_checkpoint()
+            self.load_best_weights()
 
         self.print("\n── Test Epoch\n")
         metrics = self._execute_epoch(test_loader, phase=self._TEST_PHASE, training=False)
         self.print_metrics(metrics, phase=self._TEST_PHASE)
         # Terminal operation, like the end of ``train()`` — release cached
         # blocks now that no further epochs depend on allocator reuse.
-        self.clear_cuda_cache()
+        self.empty_cuda_cache()
         return metrics
 
     @_require_setup
@@ -764,10 +775,20 @@ class BaseTrainer(abc.ABC):
         """
         Prepare the trainer for a new run.
 
-        Prints the environment summary, saves the config, calls ``ensure_setup()``,
-        optionally resumes from the latest checkpoint, then prints model and
-        optimization summaries.
+        When not resuming, first resets the in-memory state (see
+        :meth:`reset_trainer`) and clears any previous run artifacts (see
+        :meth:`clear_artifacts`), so a fresh run inherits neither stale state nor
+        stale files. Then prints the environment summary, saves the config, calls
+        ``ensure_setup()``, optionally resumes from the latest checkpoint, and
+        prints model and optimization summaries.
         """
+        if not self.resume:
+            # A fresh run must be fresh in memory as well as on disk — otherwise a
+            # reused trainer keeps its epoch counter, metrics, and already-built
+            # models (skipping training as "already completed" or continuing the
+            # old models). Reset state, then clear the directory, so the two agree.
+            self.reset_trainer()
+            self.clear_artifacts()
         self.print_env_summary()
         self.save_config()
         self.print_config()
@@ -800,14 +821,75 @@ class BaseTrainer(abc.ABC):
 
     def reset_trainer(self) -> None:
         """
-        Reset the trainer to a clean initial state.
+        Reset the trainer to its freshly constructed state.
 
-        Clears setup, training state, metrics, and the step cache.
+        Composes the individual resets — setup (:meth:`clear_setup`), training
+        progress (:meth:`reset_training_state`), metrics (:meth:`clear_metrics`),
+        and the step cache (:meth:`clear_cache`) — then rewinds the
+        reproducibility sources that do not reset on their own, so a subsequent
+        ``train()`` faithfully repeats the first. User-set checkpoint extras are
+        configuration, not training state, and are kept.
         """
         self.clear_setup()
         self.reset_training_state()
         self.clear_metrics()
         self.clear_cache()
+        # The RNGs and the scaler's fp16 loss scale would otherwise carry over;
+        # the transient _cycle_weight / _last_dash_write counters reset on use.
+        self.reset_seed()
+        self.reset_scaler()
+
+    def reset_seed(self) -> None:
+        """
+        Apply the configured ``seed`` to the Python, NumPy, and Torch RNGs.
+
+        Called from ``__init__`` to seed the first run and from
+        :meth:`reset_trainer` to rewind every RNG to that same state, so a
+        subsequent run resamples identically; on CUDA it also re-pins the
+        deterministic cuDNN flags. A no-op when no ``seed`` was set.
+        """
+        if self.seed is None:
+            return
+        seed = self.seed
+        random.seed(seed)
+        np.random.seed(seed)
+        torch.manual_seed(seed)
+        if self.device.type == "cuda":
+            torch.cuda.manual_seed(seed)
+            torch.cuda.manual_seed_all(seed)
+            torch.backends.cudnn.deterministic = True
+            torch.backends.cudnn.benchmark = False
+        elif self.device.type == "mps":
+            torch.mps.manual_seed(seed)
+
+    def reset_scaler(self) -> None:
+        """
+        Re-initialize the AMP ``GradScaler``, preserving whether it is enabled.
+
+        Its fp16 loss scale adapts during training; rebuilding discards that
+        adaptation so a fresh run starts from the construction-time scale. (bf16
+        and full precision keep a disabled, passthrough scaler.)
+        """
+        self._scaler = torch.amp.GradScaler(enabled=self._scaler.is_enabled())
+
+    def clear_artifacts(self) -> None:
+        """
+        Delete this run's checkpoints, metrics, plots, and dashboard files from
+        ``run_dir``.
+
+        Removes only the trainer-owned artifacts — ``config.json``, the log, and
+        any user files in ``run_dir`` are left untouched — for a clean slate. A
+        no-op (and silent) when none of them exist. ``prepare_training`` calls
+        this automatically when ``resume=False``.
+        """
+        dirs = (self._checkpoints_dir, self._metrics_dir, self._plots_dir)
+        if not any(p.exists() for p in (*dirs, *self._dashboard_files)):
+            return
+        for directory in dirs:
+            remove_dir(directory)
+        for file in self._dashboard_files:
+            file.unlink(missing_ok=True)
+        self.print("🧹 Cleared previous run artifacts (checkpoints, metrics, plots, dashboard).")
 
     # ── Epoch Control ─────────────────────────────────────────────────────────
 
@@ -846,7 +928,7 @@ class BaseTrainer(abc.ABC):
         self._best_epoch = None
         self._epochs_no_improve = 0
 
-    def is_training_completed(self) -> bool:
+    def is_training_complete(self) -> bool:
         """Return ``True`` if the epoch counter has reached ``num_epochs``.
 
         Always ``False`` when ``num_epochs`` is unset, since no training is configured.
@@ -861,7 +943,7 @@ class BaseTrainer(abc.ABC):
         """Return ``True`` if the early-stopping patience has been exhausted."""
         return self.patience is not None and self._epochs_no_improve >= self.patience
 
-    # ── Model / Optimizer / Scheduler ────────────────────────────────────────
+    # ── Model / Optimizer / Scheduler ─────────────────────────────────────────
 
     def set_models(
         self,
@@ -1108,8 +1190,27 @@ class BaseTrainer(abc.ABC):
 
     @_require_setup
     def load_best_checkpoint(self) -> None:
-        """Load the checkpoint from the best validation epoch."""
+        """Load the full checkpoint from the best validation epoch.
+
+        Restores everything — weights, optimizer, training state, and the metric
+        history *as of the best epoch* — so the trainer rewinds to that epoch.
+        To evaluate the best model without disturbing the current run, load only
+        its weights with :meth:`load_best_weights` (what ``test(use_best=True)``
+        does).
+        """
         self._load_checkpoint(self.get_best_checkpoint_path(), "🏆 Loading best checkpoint")
+
+    @_require_setup
+    def load_best_weights(self) -> None:
+        """Load only the model weights from the best checkpoint.
+
+        Leaves the optimizer, training state, and recorded metrics untouched —
+        the right tool for evaluating the best model mid-run without rewinding,
+        unlike the full :meth:`load_best_checkpoint`.
+        """
+        self._load_checkpoint(
+            self.get_best_checkpoint_path(), "🏆 Loading best weights", weights_only=True
+        )
 
     def exclude_from_checkpoint(self, names: str | list[str]) -> None:
         """
@@ -1169,6 +1270,41 @@ class BaseTrainer(abc.ABC):
         return self._checkpoints_dir / f"{name}.pth"
 
     # ── Config ────────────────────────────────────────────────────────────────
+
+    @classmethod
+    def from_config(cls, path: Path | str, **overrides: Any) -> Self:
+        """
+        Construct a trainer from a saved ``config.json`` — the inverse of
+        :meth:`save_config`.
+
+        The config records exactly the constructor arguments the original run
+        customized (defaults omitted; see ``__init__``), so reconstruction is
+        just ``cls(**config)``. Only ``BaseTrainer`` constructor arguments are
+        consumed — filtered against the same signature that wrote them, so custom
+        metadata added via :meth:`update_config` is ignored and a stale key from
+        an older version is dropped rather than fatal. A subclass's own
+        constructor arguments are not recorded in the base config and so must be
+        supplied through *overrides*.
+
+        Keyword *overrides* take precedence over the file: pass ``device`` to
+        reload on a host without the original one, ``run_dir`` to write into a
+        fresh directory, or any subclass argument the config omits.
+
+        Args:
+            path: The ``config.json`` file, or the run directory containing it.
+            **overrides: Constructor arguments that replace the file's values.
+
+        Returns:
+            A new trainer instance.
+        """
+        path = Path(path)
+        if path.is_dir():
+            path = path / cls._CONFIG_FILENAME
+        with open(path, encoding="utf-8") as f:
+            config = json.load(f)
+        params = inspect.signature(BaseTrainer.__init__).parameters
+        config = {key: value for key, value in config.items() if key in params}
+        return cls(**{**config, **overrides})
 
     def update_config(self, entries: dict[str, Any]) -> None:
         """
@@ -1372,10 +1508,10 @@ class BaseTrainer(abc.ABC):
             pass
         return platform.processor() or platform.machine() or "Unknown"
 
-    def get_env_info(self) -> dict[str, Any]:
+    def get_env_summary(self) -> dict[str, Any]:
         """Return the system and runtime environment summary as a dict."""
         disk = shutil.disk_usage(self.run_dir)
-        info: dict[str, Any] = {
+        result: dict[str, Any] = {
             "OS":        self._os_name(),
             "CPU":       self._cpu_name(),
             "CPU cores": multiprocessing.cpu_count(),
@@ -1383,26 +1519,26 @@ class BaseTrainer(abc.ABC):
             "Disk":      f"{disk.free / 1e9:.2f} / {disk.total / 1e9:.2f} GB free",
         }
         if torch.cuda.is_available():
-            idx = self._cuda_index
-            props = torch.cuda.get_device_properties(idx)
-            info["GPU"]   = f"cuda:{idx} {torch.cuda.get_device_name(idx)}"
-            info["VRAM"]  = f"{props.total_memory / 1e9:.2f} GB"
-            info["CUDA"]  = torch.version.cuda
-            info["cuDNN"] = str(torch.backends.cudnn.version())
+            index = self._cuda_index
+            props = torch.cuda.get_device_properties(index)
+            result["GPU"]   = f"cuda:{index} {torch.cuda.get_device_name(index)}"
+            result["VRAM"]  = f"{props.total_memory / 1e9:.2f} GB"
+            result["CUDA"]  = torch.version.cuda
+            result["cuDNN"] = str(torch.backends.cudnn.version())
         else:
-            info |= {"GPU": "Not available", "VRAM": "-", "CUDA": "-", "cuDNN": "-"}
-        info["Python"]  = platform.python_version()
-        info["PyTorch"] = torch.__version__
+            result |= {"GPU": "Not available", "VRAM": "-", "CUDA": "-", "cuDNN": "-"}
+        result["Python"]  = platform.python_version()
+        result["PyTorch"] = torch.__version__
         for pkg in ("torchvision", "torchaudio"):
             try:
-                info[pkg] = importlib.metadata.version(pkg)
+                result[pkg] = importlib.metadata.version(pkg)
             except importlib.metadata.PackageNotFoundError:
                 pass
-        return info
+        return result
 
     def print_env_summary(self) -> None:
         """Print a system and runtime environment summary for experiment reproducibility."""
-        self.print_dict_tree(self.get_env_info(), header="🖥️  Environment")
+        self.print_dict_tree(self.get_env_summary(), header="🖥️  Environment")
 
     def print_config(self) -> None:
         """Print the current trainer configuration."""
@@ -1466,7 +1602,7 @@ class BaseTrainer(abc.ABC):
             metrics,
             max_depth=0,
             header=f"📊 {phase.capitalize()}",
-            key_width=self.key_width,
+            key_width=self._KEY_WIDTH,
             float_fmt=4,
             trailing_newline=True,
             print_fn=self.print,
@@ -1490,7 +1626,7 @@ class BaseTrainer(abc.ABC):
             tree,
             max_depth=max_depth,
             header=header,
-            key_width=self.key_width,
+            key_width=self._KEY_WIDTH,
             trailing_newline=True,
             print_fn=self.print,
         )
@@ -1542,8 +1678,7 @@ class BaseTrainer(abc.ABC):
                     "nvidia-smi", "-i", str(self._cuda_index),
                     "--query-gpu=temperature.gpu", "--format=csv,noheader,nounits",
                 ],
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
+                capture_output=True,
                 text=True,
                 check=True,
             )
@@ -1563,7 +1698,7 @@ class BaseTrainer(abc.ABC):
             self.print(f"Failed to get GPU temperature: {e}", level="warn")
 
     @staticmethod
-    def clear_cuda_cache() -> None:
+    def empty_cuda_cache() -> None:
         """Free Python-held tensor references and clear the CUDA memory cache."""
         if torch.cuda.is_available():
             gc.collect()
@@ -1581,17 +1716,17 @@ class BaseTrainer(abc.ABC):
         self.clear_cache()
         self._set_training_mode(training)
         self.on_epoch_start(epoch, loader, phase)
-        metrics = self._run_epoch(loader, phase, training)
+        metrics = self._iterate_epoch(loader, phase, training)
         self._record_epoch_metrics(metrics, phase)
         self._dash_update()
         self.on_epoch_end(epoch, loader, metrics, phase)
         # NOTE: no per-epoch ``empty_cache()`` here — releasing cached blocks
         # back to the driver every epoch forces the allocator to re-acquire
         # them next epoch, which slows training. A single cleanup runs at the
-        # end of ``train()``; call ``clear_cuda_cache()`` manually if needed.
+        # end of ``train()``; call ``empty_cuda_cache()`` manually if needed.
         return metrics
 
-    def _run_epoch(self, loader: DataLoader, phase: str, training: bool) -> dict[str, float]:
+    def _iterate_epoch(self, loader: DataLoader, phase: str, training: bool) -> dict[str, float]:
         # Start each training epoch with a clean gradient state so any
         # unstepped accumulation from the previous epoch (possible for
         # IterableDataset loaders whose length is unknown) is discarded —
@@ -1600,7 +1735,7 @@ class BaseTrainer(abc.ABC):
             self._optimizer.zero_grad(set_to_none=True)
             self._cycle_weight = 0.0
         pbar: tqdm | None = (
-            tqdm(loader, desc=f"{phase.capitalize()} Epoch", leave=self.keep_progress_bar)
+            tqdm(loader, desc=f"{phase.capitalize()} Epoch", leave=self._KEEP_PROGRESS_BAR)
             if self.use_progress_bar else None
         )
         accumulated: dict[str, float] = {}
@@ -1637,7 +1772,7 @@ class BaseTrainer(abc.ABC):
         # the standalone ``execute_step`` path computes it here on demand.
         if training and weight is None:
             weight = self.get_batch_weight(batch)
-        metrics = self._run_step(
+        metrics = self._compute_step(
             batch, phase, training, weight=weight, apply_update=apply_update,
         )
         # Throttle intermediate steps, but always write the final step of a
@@ -1651,7 +1786,7 @@ class BaseTrainer(abc.ABC):
         self.on_step_end(step, batch, metrics, phase)
         return metrics
 
-    def _run_step(
+    def _compute_step(
         self,
         batch: Any,
         phase: str,
@@ -1687,14 +1822,14 @@ class BaseTrainer(abc.ABC):
     def _autocast(self) -> torch.autocast:
         """Autocast context for the configured AMP device/dtype.
 
-        A single source of truth for the two call sites in :meth:`_run_step`; a
+        A single source of truth for the two call sites in :meth:`_compute_step`; a
         transparent no-op when AMP is disabled (``enabled=False``).
         """
         return torch.autocast(
             self.device.type, dtype=self._amp_dtype, enabled=self._amp_enabled,
         )
 
-    # ── Internal: Optimizer / Scheduler ──────────────────────────────────────
+    # ── Internal: Optimizer / Scheduler ───────────────────────────────────────
 
     def _is_accumulation_boundary(self, step: int, max_step: int) -> bool:
         """Whether the 1-based ``step`` ends a gradient-accumulation cycle and
@@ -1786,7 +1921,7 @@ class BaseTrainer(abc.ABC):
         else:
             self._scheduler.step()
 
-    # ── Internal: Early Stopping / Mode ──────────────────────────────────────
+    # ── Internal: Early Stopping / Mode ───────────────────────────────────────
 
     def _require_num_epochs(self) -> None:
         """Guard the training-only entry points against an unset ``num_epochs``."""
@@ -1885,7 +2020,7 @@ class BaseTrainer(abc.ABC):
         weights_only: bool = False,
     ) -> None:
         self.print(f"{label} ...")
-        self.print(f" {'─' * (self.key_width + self._SEPARATOR_PAD)}")
+        self.print(f" {'─' * (self._KEY_WIDTH + self._SEPARATOR_PAD)}")
         ckpt = self._read_checkpoint(path)
         if not ckpt:
             return
@@ -1940,7 +2075,7 @@ class BaseTrainer(abc.ABC):
         print_dict_tree(
             loaded,
             max_depth=0,
-            key_width=self.key_width,
+            key_width=self._KEY_WIDTH,
             print_fn=self.print,
         )
 
@@ -2119,12 +2254,14 @@ class BaseTrainer(abc.ABC):
             log_path=self.run_dir / self._LOG_FILENAME,
             verbose=True,
             debug_mode=self.debug_mode,
-            file_mode="a",
+            # Append across a resume so the log is continuous; start a fresh log
+            # for a fresh run (resume=False), matching the cleared artifacts.
+            file_mode="a" if self.resume else "w",
         )
 
     # ── Internal: Dashboard ───────────────────────────────────────────────────
 
-    def _init_dashboard(
+    def _dash_init(
         self,
         train_loader: DataLoader | None = None,
         val_loader: DataLoader | None = None,
@@ -2133,7 +2270,7 @@ class BaseTrainer(abc.ABC):
             return
         self._dashboard.initialize(
             self._config,
-            env_info=self.get_env_info(),
+            env_summary=self.get_env_summary(),
             model_summary=self.get_model_summary(),
             training_phases=self.training_phases,
             monitor=self.monitor,
@@ -2212,7 +2349,7 @@ class BaseTrainer(abc.ABC):
         mib_to_gb = (1 << 20) / 1e9
         return (used_mib * mib_to_gb, total_mib * mib_to_gb)
 
-    def _finalize_dashboard(self) -> None:
+    def _dash_finalize(self) -> None:
         if self._dashboard is None:
             return
         self._dashboard.finalize(
@@ -2282,38 +2419,31 @@ class BaseTrainer(abc.ABC):
             raise RuntimeError(f"Invalid loss value: {val}")
         return float(val)
 
-    # ── Internal: Seed & GPU ──────────────────────────────────────────────────
+    # ── Internal: Precision & Config ──────────────────────────────────────────
 
-    @property
-    def _cuda_index(self) -> int:
-        """Index of the CUDA device the trainer reports on and probes."""
-        if self.device.type == "cuda" and self.device.index is not None:
-            return self.device.index
-        return torch.cuda.current_device() if torch.cuda.is_available() else 0
+    def _init_amp(self) -> tuple[bool, torch.dtype, torch.amp.GradScaler]:
+        """Resolve automatic mixed precision from the ``amp`` setting.
 
-    def _init_amp(self, amp: bool | str | None) -> None:
-        """Initialize automatic mixed precision from the ``amp`` argument.
-
-        Sets :attr:`_amp_enabled`, :attr:`_amp_dtype`, and :attr:`_scaler` — a
-        :class:`~torch.amp.GradScaler` kept live only for fp16, since bf16's
-        fp32-range exponent cannot underflow gradients and so needs no loss
-        scaling. A disabled scaler is a transparent passthrough, keeping the
-        optimizer step uniform across precisions.
+        Returns ``(enabled, dtype, scaler)`` — the resolved AMP flag, the
+        autocast dtype, and a :class:`~torch.amp.GradScaler` kept live only for
+        fp16, since bf16's fp32-range exponent cannot underflow gradients and so
+        needs no loss scaling. A disabled scaler is a transparent passthrough,
+        keeping the optimizer step uniform across precisions.
         """
+        amp = self.amp
         # Autocast dtype: an explicit "bf16"/"fp16" selects it; anything else
         # (the ``None``/bool forms) defaults to bf16.
         if isinstance(amp, str):
             dtype = {"bf16": torch.bfloat16, "fp16": torch.float16}.get(amp.lower())
             if dtype is None:
                 raise ValueError(f"amp must be a bool, 'bf16', 'fp16', or None; got {amp!r}")
-            self._amp_dtype = dtype
         else:
-            self._amp_dtype = torch.bfloat16
+            dtype = torch.bfloat16
 
         # Enabled unless explicitly disabled (``amp=False``), and only on CUDA;
         # an explicit request on any other device is warned about and ignored.
         on_cuda = self.device.type == "cuda"
-        self._amp_enabled = amp is not False and on_cuda
+        enabled = amp is not False and on_cuda
         if amp and not on_cuda:
             self.print(
                 f"amp={amp!r} was requested but device is '{self.device.type}'; "
@@ -2323,17 +2453,18 @@ class BaseTrainer(abc.ABC):
 
         # A GradScaler matters only for fp16; bf16 and full precision use a
         # disabled, passthrough scaler.
-        self._scaler = torch.amp.GradScaler(
-            enabled=self._amp_enabled and self._amp_dtype is torch.float16,
-        )
+        scaler = torch.amp.GradScaler(enabled=enabled and dtype is torch.float16)
+        return enabled, dtype, scaler
 
-    def _init_tf32(self, tf32: bool | None) -> None:
-        """Configure TF32 and the cuDNN autotuner from the ``tf32`` argument.
+    def _init_tf32(self) -> bool:
+        """Configure TF32 and the cuDNN autotuner from the ``tf32`` setting.
 
-        ``None`` auto-enables both only when no ``seed`` is set, trading exact
-        reproducibility for speed. Must run *after* :meth:`_set_seed`, whose
-        deterministic / ``benchmark=False`` flags this may relax.
+        Returns whether TF32 ended up enabled. ``None`` auto-enables both only
+        when no ``seed`` is set, trading exact reproducibility for speed. Must
+        run *after* :meth:`reset_seed`, whose deterministic / ``benchmark=False``
+        flags this may relax.
         """
+        tf32 = self.tf32
         # TF32 only applies to CUDA; elsewhere it's a no-op, and an explicit
         # request that can't be honored is warned about and ignored.
         if self.device.type != "cuda":
@@ -2343,12 +2474,10 @@ class BaseTrainer(abc.ABC):
                     "ignored (TF32 only applies to CUDA).",
                     level="warn",
                 )
-            self._tf32_enabled = False
-            return
+            return False
 
         # ``None`` follows the seed (speed when not reproducing); a bool forces it.
         enabled = (self.seed is None) if tf32 is None else bool(tf32)
-        self._tf32_enabled = enabled
         if enabled and self.seed is not None:
             self.print(
                 "tf32 is enabled alongside a fixed seed; runs are only approximately "
@@ -2360,9 +2489,10 @@ class BaseTrainer(abc.ABC):
         torch.set_float32_matmul_precision("high" if enabled else "highest")
         # The cuDNN autotuner is nondeterministic and assumes fixed input sizes,
         # so enable it only when not seeding (it also conflicts with the
-        # deterministic flags _set_seed applies for a fixed seed).
+        # deterministic flags reset_seed applies for a fixed seed).
         if enabled and self.seed is None:
             torch.backends.cudnn.benchmark = True
+        return enabled
 
     def _customized_config(self, provided: dict[str, Any]) -> dict[str, Any]:
         """Return only the entries whose value differs from the constructor's
@@ -2377,18 +2507,14 @@ class BaseTrainer(abc.ABC):
             or value != params[key].default
         }
 
-    def _set_seed(self, seed: int) -> None:
-        random.seed(seed)
-        np.random.seed(seed)
-        torch.manual_seed(seed)
+    # ── Internal: GPU ─────────────────────────────────────────────────────────
 
-        if self.device.type == "cuda":
-            torch.cuda.manual_seed(seed)
-            torch.cuda.manual_seed_all(seed)
-            torch.backends.cudnn.deterministic = True
-            torch.backends.cudnn.benchmark = False
-        elif self.device.type == "mps":
-            torch.mps.manual_seed(seed)
+    @property
+    def _cuda_index(self) -> int:
+        """Index of the CUDA device the trainer reports on and probes."""
+        if self.device.type == "cuda" and self.device.index is not None:
+            return self.device.index
+        return torch.cuda.current_device() if torch.cuda.is_available() else 0
 
     def _gpu_memory_mib(self) -> tuple[int, int, int]:
         """Return ``(used, total, free)`` GPU memory in MiB for the selected device.
