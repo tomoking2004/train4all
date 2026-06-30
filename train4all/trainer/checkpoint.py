@@ -66,10 +66,10 @@ class Checkpoint:
         self._raw = raw
         self.path = Path(path) if path is not None else None
 
-    # ── Construction & persistence ─────────────────────────────────────────────
+    # ── Construction & persistence ────────────────────────────────────────────
 
     @classmethod
-    def load(cls, path: Path | str, *, map_location: Any = "cpu") -> "Checkpoint":
+    def load(cls, path: Path | str, *, map_location: Any = "cpu") -> Checkpoint:
         """
         Load a checkpoint file from disk.
 
@@ -107,7 +107,7 @@ class Checkpoint:
         scaler: dict[str, Any] | None = None,
         training_state: dict[str, Any] | None = None,
         metrics: dict[str, MetricTable] | None = None,
-    ) -> "Checkpoint":
+    ) -> Checkpoint:
         """
         Assemble a checkpoint, ready to :meth:`save`.
 
@@ -142,7 +142,7 @@ class Checkpoint:
         path.parent.mkdir(parents=True, exist_ok=True)
         torch.save(self._raw, path)
 
-    # ── Accessors ──────────────────────────────────────────────────────────────
+    # ── Accessors ─────────────────────────────────────────────────────────────
 
     @property
     def raw(self) -> dict[str, Any]:
@@ -202,7 +202,7 @@ class Checkpoint:
         """Recorded metric tables, keyed ``"epoch_metrics"`` / ``"step_metrics"``."""
         return self._raw.get("metrics", {})
 
-    # ── Inspection ─────────────────────────────────────────────────────────────
+    # ── Inspection ────────────────────────────────────────────────────────────
 
     def model_summary(self) -> dict[str, dict[str, int]]:
         """Per-model ``{"parameters": total_numel, "tensors": count}``."""
@@ -258,7 +258,7 @@ class Checkpoint:
             print_fn=print_fn,
         )
 
-    # ── Dunder helpers ─────────────────────────────────────────────────────────
+    # ── Dunder helpers ────────────────────────────────────────────────────────
 
     def __bool__(self) -> bool:
         return bool(self._raw)
