@@ -155,7 +155,7 @@ class Dashboard:
         self._started_at: datetime | None = None
         self._status: str = "idle"
         self._trainer_config: dict[str, Any] = {}
-        self._env_info: dict[str, Any] = {}
+        self._env_summary: dict[str, Any] = {}
         self._model_summary: dict[str, Any] = {}
         self._training_phases: list[str] = ["train"]
         self._monitor: str = "loss"
@@ -210,7 +210,7 @@ class Dashboard:
     def initialize(
         self,
         trainer_config: dict[str, Any],
-        env_info: dict[str, Any] | None = None,
+        env_summary: dict[str, Any] | None = None,
         model_summary: dict[str, Any] | None = None,
         training_phases: list[str] | None = None,
         monitor: str = "loss",
@@ -226,7 +226,7 @@ class Dashboard:
 
         Args:
             trainer_config: Trainer hyperparameters shown in the Configuration panel.
-            env_info: System and runtime details shown in the Environment panel.
+            env_summary: System and runtime details shown in the Environment panel.
             model_summary: Registered model names and parameter counts shown in
                 the Model panel.
             training_phases: Phase names that trigger gradient updates, used to
@@ -241,7 +241,7 @@ class Dashboard:
         self._started_at = datetime.now()
         self._status = "training"
         self._trainer_config = trainer_config
-        self._env_info = env_info or {}
+        self._env_summary = env_summary or {}
         self._model_summary = model_summary or {}
         if training_phases is not None:
             self._training_phases = training_phases
@@ -432,7 +432,7 @@ class Dashboard:
             "gpu_mem_used":       self._gpu_mem[0] if self._gpu_mem else None,
             "gpu_mem_total":      self._gpu_mem[1] if self._gpu_mem else None,
             "config":             self._trainer_config,
-            "env_info":           self._env_info,
+            "env_summary":        self._env_summary,
             "model_summary":      self._model_summary,
             "started_at":         self._started_at.strftime("%Y-%m-%d %H:%M:%S") if self._started_at else None,
             "elapsed":            str(el).split(".")[0] if el else None,
@@ -1833,8 +1833,8 @@ document.addEventListener('DOMContentLoaded', function () {
     const liveV = primary !== null ? liveValue(d, primary) : undefined;
     document.title = Math.round(overall * 100) + '%' + (typeof liveV === 'number' ? ' · ' + titleCase(primary) + ' ' + fmt(liveV) : '') + ' — train4all';
 
-    if (!staticDone && ((d.config && Object.keys(d.config).length) || (d.env_info && Object.keys(d.env_info).length))) {
-      renderKV('cfg-grid', d.config); renderKV('env-grid', d.env_info); renderKV('model-grid', d.model_summary);
+    if (!staticDone && ((d.config && Object.keys(d.config).length) || (d.env_summary && Object.keys(d.env_summary).length))) {
+      renderKV('cfg-grid', d.config); renderKV('env-grid', d.env_summary); renderKV('model-grid', d.model_summary);
       staticDone = true;
     }
     setText('footer', 'train4all' + (VERSION ? ' v' + VERSION : '') + ' · ' + (d.updated_at || ''));
