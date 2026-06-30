@@ -2,7 +2,7 @@ import logging
 import sys
 from collections.abc import Callable, Mapping
 from pathlib import Path
-from typing import Literal, Protocol, TypeAlias, runtime_checkable
+from typing import ClassVar, Literal, Protocol, runtime_checkable
 
 try:
     sys.stdout.reconfigure(encoding="utf-8")
@@ -10,8 +10,8 @@ except (AttributeError, ValueError):
     pass
 
 
-LogLevel: TypeAlias = Literal["info", "debug", "warn"]
-Printer: TypeAlias = Callable[[str], object]
+type LogLevel = Literal["info", "debug", "warn"]
+type Printer = Callable[[str], object]
 
 _SEPARATOR_PAD = 48  # separator rule width = key_width + this pad
 
@@ -121,7 +121,7 @@ class UnifiedLogger:
         file_mode: File open mode — ``"a"`` to append, ``"w"`` to overwrite.
     """
 
-    _LEVEL_MAP: dict[LogLevel, tuple[int, str]] = {
+    _LEVEL_MAP: ClassVar[dict[LogLevel, tuple[int, str]]] = {
         "debug": (logging.DEBUG,   "[DEBUG] "),
         "info":  (logging.INFO,    ""),
         "warn":  (logging.WARNING, "⚠️  "),

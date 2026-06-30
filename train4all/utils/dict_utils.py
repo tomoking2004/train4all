@@ -1,7 +1,6 @@
 from collections.abc import Mapping, Sequence
-from typing import TypeAlias
 
-MetricTable: TypeAlias = dict[str, dict[str, list[float]]]
+type MetricTable = dict[str, dict[str, list[float]]]
 """Mapping of ``metric_name → phase → list[value]`` recorded over training."""
 
 
