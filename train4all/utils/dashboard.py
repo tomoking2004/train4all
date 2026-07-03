@@ -11,12 +11,21 @@ Architecture
 
 Design
 ──────
-A quiet, Apple-like instrument panel: one centred column, frosted-glass cards
-over soft ambient colour, hairline rules, and a single state-driven accent.
+A laboratory chart recorder. Training curves are ink traces on engineering
+graph paper — a two-tier grid behind every plot — and the live step-loss is a
+strip chart whose pen head sits fixed at the right edge while the paper
+scrolls beneath it. Light theme is the drafting room by day; dark is the
+instrument room at night. IBM Plex Mono carries the wordmark and every number
+and axis, engraved-style letterspaced capitals label the readouts, and IBM
+Plex Sans carries prose. Matte panels and precise hairlines — no glass. A
+vivid display spectrum (gradient wordmark, gauge ring, runline, and three
+quiet ambient washes) carries the colour the data inks deliberately restrain.
 
-A large progress gauge anchors the page — concentric rings (outer = overall
-run, gold once the run completes; inner = the live phase's steps, gold in the
-gaps between phases and blank once the run ends) with the overall percentage at
+A large progress gauge anchors the page — concentric rings inside a fine
+machined tick bezel (outer = overall run, sweeping the display spectrum and
+crowned gold once the run completes; inner = the live phase's steps, gold in
+the gaps between
+phases and blank once the run ends) with the overall percentage at
 its centre, epoch divider ticks, and a gold ★ best-epoch marker on its rim. Run
 progress is strictly monotonic: train and validation steps both advance it
 proportionally, it never rewinds across a phase or epoch boundary, and it holds
@@ -38,13 +47,14 @@ a log-scale toggle, and vector export; they render at their container's exact
 pixel width (a ResizeObserver re-renders on reflow) and gridlines snap to nice
 values — powers of ten on the log scale.
 
-Every phase owns a fixed hue on a blue→violet→red spectrum — train blue,
-validation purple, test pink — so curves, legends, the phase badge, the inner
-gauge ring, and the state accents always agree. Red means offline (a plateau
-keeps the training blue — the gold ★ carries that signal); gold is reserved for
-excellence (best epoch, completed run). No green. A fixed hairline across the
-top of the viewport mirrors overall progress in the same spectrum, and turns
-gold once the run completes.
+Every phase owns a fixed ink on a blue→violet→magenta spectrum — train blue,
+validation violet, test magenta, validated for colour-vision deficiency
+(Machado protan/deutan ΔE ≥ 12 between adjacent inks, in both themes) — so
+curves, legends, the phase badge, the inner gauge ring, and the state accents
+always agree. Red means offline (a plateau keeps the training blue — the gold
+★ carries that signal); gold is reserved for excellence (best epoch, completed
+run). No green. A fixed hairline across the top of the viewport mirrors
+overall progress in the same spectrum, and turns gold once the run completes.
 
 Configuration, environment, and model tables close the page — nested-dict
 config opens indented sub-groups; click any row to copy its value (a gold flash
@@ -65,6 +75,7 @@ Layout
 
 from __future__ import annotations
 
+import contextlib
 import functools
 import http.server
 import importlib.metadata
@@ -428,6 +439,7 @@ class Dashboard:
             "step_loss_phase":    self._step_phase,
             "step_loss_first":    self._step_nums[0] if self._step_nums else None,
             "step_loss_last":     self._step_nums[-1] if self._step_nums else None,
+            "step_loss_cap":      _STEP_HISTORY,
             "learning_rate":      self._learning_rate,
             "gpu_mem_used":       self._gpu_mem[0] if self._gpu_mem else None,
             "gpu_mem_total":      self._gpu_mem[1] if self._gpu_mem else None,
@@ -502,10 +514,8 @@ class Dashboard:
                 time.sleep(0.05)
             except OSError:
                 break
-        try:
+        with contextlib.suppress(OSError):
             tmp.unlink(missing_ok=True)
-        except OSError:
-            pass
 
     def _open_browser(self) -> None:
         """Open the dashboard, preferring the machine you are working *from*.
@@ -573,100 +583,116 @@ class Dashboard:
         threading.Thread(target=_run, daemon=True).start()
 
 
-# ── Static assets ─────────────────────────────────────────────────────────────
+# ── Static Assets ─────────────────────────────────────────────────────────────
 
 _CSS = r"""
-/* ── Theme tokens ──────────────────────────────────────────── */
+/* ── Theme tokens — recorder inks on instrument surfaces ────── */
+/* Phase inks are CVD-validated (Machado protan/deutan ΔE ≥ 12 between
+   adjacent slots, both themes) against each theme's panel surface. */
 :root, [data-theme="dark"] {
-  --bg:        #0a0b0d;
-  --text:      #e9ebef;
-  --dim:       #9aa1ac;
-  --faint:     #5c6270;
+  --bg:        #0a0d12;
+  --panel:     #10151c;
+  --text:      #e7eaf0;
+  --dim:       #99a2b1;
+  --faint:     #5d6675;
   --line:      rgba(255, 255, 255, 0.07);
   --line-2:    rgba(255, 255, 255, 0.16);
   --hover:     rgba(255, 255, 255, 0.04);
-  --tip-bg:    #15171c;
+  --grid-1:    rgba(141, 172, 224, 0.07);   /* graph-paper minor rule */
+  --grid-2:    rgba(141, 172, 224, 0.14);   /* graph-paper major rule */
+  --tip-bg:    #151b24;
   --thumb:     rgba(255, 255, 255, 0.15);
-  --shadow:    0 10px 32px rgba(0, 0, 0, 0.45);
-  --gold:      #e3bd6a;
-  --good:      #5e8bff;
-  --bad:       #f25c6e;
-  --st-training:   #5e8bff;
-  --st-validating: #b262f4;
-  --st-stagnant:   #5e8bff;  /* plateau keeps the training blue — gold ★ already tells the story */
-  --st-completed:  #e3bd6a;
+  --shadow:    0 12px 36px rgba(0, 0, 0, 0.42);
+  --edge:      inset 0 1px 0 rgba(255, 255, 255, 0.05);
+  --gold:      #e2bd6e;
+  --good:      #268beb;
+  --bad:       #f2596b;
+  --st-training:   #268beb;
+  --st-validating: #a668d6;  /* the val ink lightened — badge text stays legible on night panels */
+  --st-stagnant:   #268beb;  /* plateau keeps the training blue — gold ★ already tells the story */
+  --st-completed:  #e2bd6e;
   --st-idle:       #8a90a0;
-  --st-stopped:    #f25c6e;
-  --glass:         rgba(17, 19, 25, 0.55);
-  --glass-edge:    rgba(255, 255, 255, 0.06);
-  --card-shadow:   0 10px 30px rgba(0, 0, 0, 0.28);
-  --c1: #5e8bff; --c2: #7a7bff; --c3: #976dfd; --c4: #b262f4;
-  --c5: #cc58e3; --c6: #e150c4; --c7: #ee559b; --c8: #f25c6e;
+  --st-stopped:    #f2596b;
+  --c1: #268beb; --c2: #5d76d8; --c3: #7760c5; --c4: #8846b2;
+  --c5: #9243a4; --c6: #9c3e96; --c7: #a63888; --c8: #f2596b;
+  /* display spectrum — vivid stops reserved for decoration (wordmark, gauge
+     ring, runline, ambient washes); data inks above stay CVD-validated */
+  --g1: #5e8bff; --g2: #7a7bff; --g3: #976dfd; --g4: #b262f4;
+  --g5: #cc58e3; --g6: #e150c4; --g7: #ee559b; --g8: #f25c6e;
   --spectrum: linear-gradient(90deg, #5e8bff, #7a7bff, #976dfd, #b262f4, #cc58e3, #e150c4, #ee559b, #f25c6e);
   color-scheme: dark;
 }
 [data-theme="light"] {
-  --bg:        #faf9f5;
-  --text:      #1c1e24;
-  --dim:       #5b6170;
-  --faint:     #989eab;
-  --line:      rgba(22, 24, 31, 0.09);
-  --line-2:    rgba(22, 24, 31, 0.2);
-  --hover:     rgba(22, 24, 31, 0.045);
+  --bg:        #f2f3f0;
+  --panel:     #fcfcfa;
+  --text:      #1a1d23;
+  --dim:       #545b68;
+  --faint:     #8b92a0;
+  --line:      rgba(26, 32, 44, 0.10);
+  --line-2:    rgba(26, 32, 44, 0.24);
+  --hover:     rgba(26, 32, 44, 0.045);
+  --grid-1:    rgba(84, 110, 170, 0.10);
+  --grid-2:    rgba(84, 110, 170, 0.20);
   --tip-bg:    #ffffff;
-  --thumb:     rgba(22, 24, 31, 0.2);
-  --shadow:    0 10px 32px rgba(20, 22, 30, 0.12);
-  --gold:      #9c7520;
-  --good:      #3a63dd;
-  --bad:       #cc3f56;
-  --st-training:   #3a63dd;
-  --st-validating: #863cc6;
-  --st-stagnant:   #3a63dd;
-  --st-completed:  #9c7520;
+  --thumb:     rgba(26, 32, 44, 0.2);
+  --shadow:    0 1px 2px rgba(24, 30, 42, 0.05), 0 10px 28px rgba(24, 30, 42, 0.07);
+  --edge:      inset 0 1px 0 rgba(255, 255, 255, 0.9);
+  --gold:      #96721b;
+  --good:      #0f61c3;
+  --bad:       #c73949;
+  --st-training:   #0f61c3;
+  --st-validating: #762288;
+  --st-stagnant:   #0f61c3;
+  --st-completed:  #96721b;
   --st-idle:       #6e7480;
-  --st-stopped:    #cc3f56;
-  --glass:         rgba(255, 255, 255, 0.62);
-  --glass-edge:    rgba(255, 255, 255, 0.85);
-  --card-shadow:   0 10px 30px rgba(22, 24, 31, 0.08);
-  --c1: #3a63dd; --c2: #5256d8; --c3: #6c48d0; --c4: #863cc6;
-  --c5: #a033b6; --c6: #b92e9c; --c7: #c63577; --c8: #cc3f56;
+  --st-stopped:    #c73949;
+  --c1: #0f61c3; --c2: #4b50af; --c3: #653d9b; --c4: #762288;
+  --c5: #7d1f7c; --c6: #831a70; --c7: #8a1264; --c8: #c73949;
+  --g1: #3a63dd; --g2: #5256d8; --g3: #6c48d0; --g4: #863cc6;
+  --g5: #a033b6; --g6: #b92e9c; --g7: #c63577; --g8: #cc3f56;
   --spectrum: linear-gradient(90deg, #3a63dd, #5256d8, #6c48d0, #863cc6, #a033b6, #b92e9c, #c63577, #cc3f56);
   color-scheme: light;
 }
 :root {
   --accent: var(--st-idle);
   --phasecol: var(--st-idle);
-  --mono: 'JetBrains Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
-  --sans: 'Inter', system-ui, -apple-system, 'Segoe UI', sans-serif;
+  --mono: 'IBM Plex Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
+  --sans: 'IBM Plex Sans', system-ui, -apple-system, 'Segoe UI', sans-serif;
   --ease: cubic-bezier(0.22, 0.61, 0.36, 1);
 }
 
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 /* a touch larger than the browser default — the whole UI scales from here */
-html { font-size: 17.5px; scrollbar-width: thin; scrollbar-color: var(--thumb) transparent; }
+html { font-size: 17px; scrollbar-width: thin; scrollbar-color: var(--thumb) transparent; }
 ::-webkit-scrollbar { width: 9px; height: 9px; }
 ::-webkit-scrollbar-thumb { background: var(--thumb); border-radius: 100px; }
 ::selection { background: color-mix(in srgb, var(--accent) 28%, transparent); }
 
 body {
   font-family: var(--sans); color: var(--text); background: var(--bg);
-  min-height: 100vh; line-height: 1.5; letter-spacing: -0.006em;
-  font-feature-settings: 'cv05';
+  min-height: 100vh; line-height: 1.5;
   -webkit-font-smoothing: antialiased;
   transition: background 0.3s var(--ease), color 0.3s var(--ease);
 }
-/* ambient washes — three quiet pools of spectrum colour that the
-   frosted-glass panels pick up and blur */
+/* ambient washes — three quiet pools of spectrum colour breathing under the
+   instrument panels */
 body::before {
   content: ''; position: fixed; inset: 0; z-index: -1; pointer-events: none;
   background:
-    radial-gradient(44% 38% at 10% 6%,  color-mix(in srgb, var(--c1) 11%, transparent), transparent 70%),
-    radial-gradient(38% 32% at 90% 10%, color-mix(in srgb, var(--c3) 9%, transparent), transparent 70%),
-    radial-gradient(42% 36% at 78% 96%, color-mix(in srgb, var(--c8) 7%, transparent), transparent 72%);
+    radial-gradient(44% 38% at 10% 6%,  color-mix(in srgb, var(--g1) 10%, transparent), transparent 70%),
+    radial-gradient(38% 32% at 90% 10%, color-mix(in srgb, var(--g3) 8%, transparent), transparent 70%),
+    radial-gradient(42% 36% at 78% 96%, color-mix(in srgb, var(--g8) 7%, transparent), transparent 72%);
+}
+
+/* engraved instrument capitals — the one label voice used across the whole
+   panel: readout labels, section titles, the masthead caption, the footer */
+.brand-cap, .top-meta .k, .k-label, .sg-title, .meta h2, footer {
+  font-family: var(--mono); font-weight: 500; font-size: 0.62rem;
+  letter-spacing: 0.14em; text-transform: uppercase; color: var(--faint);
 }
 
 /* overall run progress — a fixed hairline across the top of the viewport.
-   The eight-colour spectrum is anchored to the viewport, so the line reveals
+   The eight-ink spectrum is anchored to the viewport, so the line reveals
    more of the gradient as the run advances; it turns gold on completion to
    match the gauge's outer ring. */
 .runline { position: fixed; top: 0; left: 0; height: 2px; width: 0%;
@@ -679,27 +705,26 @@ body::before {
   animation: rise 0.55s var(--ease) both; }
 @keyframes rise { from { opacity: 0; transform: translateY(8px); } }
 
-/* ── Header — the wordmark anchors the page ────────────────── */
+/* ── Header — an instrument nameplate, ink on the housing ──── */
 .top { display: flex; align-items: center; gap: 18px; padding: 28px 0 24px; flex-wrap: wrap; }
-.brand { display: flex; flex-direction: column; gap: 4px; }
+.brand { display: flex; flex-direction: column; gap: 5px; }
 .brand-link { display: inline-flex; align-items: center; gap: 9px; width: fit-content;
   color: inherit; text-decoration: none; }
-/* gradient wordmark — blue → purple → pink, kept restrained */
-.brand-name { font-size: 1.6rem; font-weight: 700; letter-spacing: -0.03em; line-height: 1;
-  background-image: linear-gradient(100deg, var(--c1), var(--c4) 50%, var(--c7));
+/* gradient wordmark — the display spectrum flowing through the nameplate */
+.brand-name { font-family: var(--mono); font-size: 1.42rem; font-weight: 600;
+  letter-spacing: -0.02em; line-height: 1;
+  background-image: linear-gradient(100deg, var(--g1), var(--g4) 50%, var(--g7));
   -webkit-background-clip: text; background-clip: text; color: transparent; }
-.gh { width: 19px; height: 19px; margin-top: 1px; }
+.gh { width: 18px; height: 18px; margin-top: 1px; }
 .gh path { fill: var(--faint); transition: fill 0.2s var(--ease); }
-.gs1 { stop-color: var(--c1); } .gs2 { stop-color: var(--c4); } .gs3 { stop-color: var(--c7); }
-.brand-link:hover .gh path { fill: url(#ghGrad); }
-.brand-cap { font-size: 0.7rem; font-weight: 550; letter-spacing: 0.01em; color: var(--faint); }
+.brand-link:hover .gh path { fill: var(--text); }
 .top-meta { display: flex; gap: 22px; margin-left: auto; flex-wrap: wrap; }
-.top-meta span { display: inline-flex; align-items: baseline; gap: 7px; }
-.top-meta .k { font-size: 0.68rem; font-weight: 550; letter-spacing: 0.01em; color: var(--faint); }
+.top-meta span { display: inline-flex; align-items: baseline; gap: 8px; }
 .top-meta b { color: var(--dim); font-weight: 500; font-family: var(--mono); font-size: 0.78rem;
   font-variant-numeric: tabular-nums; }
-.pill { display: inline-flex; align-items: center; gap: 7px; padding: 6px 13px; border-radius: 100px;
-  white-space: nowrap; font-size: 0.72rem; font-weight: 600; letter-spacing: 0.01em;
+.pill { display: inline-flex; align-items: center; gap: 7px; padding: 6px 14px; border-radius: 100px;
+  white-space: nowrap; font-family: var(--mono); font-size: 0.64rem; font-weight: 600;
+  letter-spacing: 0.1em; text-transform: uppercase;
   color: var(--accent); background: color-mix(in srgb, var(--accent) 9%, transparent);
   border: 1px solid color-mix(in srgb, var(--accent) 26%, transparent);
   transition: color 0.5s var(--ease), background 0.5s var(--ease), border-color 0.5s var(--ease); }
@@ -711,7 +736,7 @@ body::before {
   100% { box-shadow: 0 0 0 0 transparent; }
 }
 .tbtn { width: 32px; height: 32px; display: inline-flex; align-items: center; justify-content: center;
-  border-radius: 9px; border: 1px solid transparent; background: none; color: var(--faint); cursor: pointer;
+  border-radius: 8px; border: 1px solid transparent; background: none; color: var(--faint); cursor: pointer;
   transition: color 0.2s var(--ease), border-color 0.2s var(--ease); }
 .tbtn:hover { color: var(--text); border-color: var(--line-2); }
 .tbtn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
@@ -720,21 +745,20 @@ body::before {
 [data-theme="light"] .tbtn .i-moon { display: block; }
 [data-theme="light"] .tbtn .i-sun { display: none; }
 
-/* ── Hero — instrument panel: gauge centred, signal-rich flanks ──── */
+/* ── Hero — the instrument fascia: gauge centred, signal-rich flanks ── */
 .hero { display: flex; justify-content: center;
-  background: var(--glass); border: 1px solid var(--line); border-radius: 22px;
-  box-shadow: inset 0 1px 0 var(--glass-edge), var(--card-shadow);
-  padding: clamp(28px, 3.4vw, 46px) clamp(20px, 3.2vw, 54px);
-  backdrop-filter: blur(20px) saturate(1.5); -webkit-backdrop-filter: blur(20px) saturate(1.5); }
+  background: var(--panel); border: 1px solid var(--line); border-radius: 14px;
+  box-shadow: var(--edge), var(--shadow);
+  padding: clamp(28px, 3.4vw, 46px) clamp(20px, 3.2vw, 54px); }
 /* KPI grid incl. learning rate + GPU (left) · overall gauge (centre) · live
-   step-loss graph (right). The flanks stretch to the gauge's height, so the
-   width either side of the gauge carries signal instead of empty margin. */
+   step-loss strip chart (right). The flanks stretch to the gauge's height, so
+   the width either side of the gauge carries signal instead of empty margin. */
 .hero-grid { display: grid; grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
   align-items: stretch; gap: clamp(20px, 2.8vw, 56px); width: 100%; margin: 0 auto; }
 .hero-center { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 18px;
   min-width: 0; padding: 2px clamp(16px, 2vw, 40px);
   border-left: 1px solid var(--line); border-right: 1px solid var(--line); }
-/* flanks vertically centre their content against the gauge; the step graph
+/* flanks vertically centre their content against the gauge; the strip chart
    (right) carries flex:1 so it fills the gauge's full height */
 .hero-side { display: flex; flex-direction: column; justify-content: center;
   gap: clamp(18px, 2.2vw, 30px); min-width: 0; }
@@ -743,41 +767,45 @@ body::before {
 .kpi-grid { display: grid; grid-template-columns: 1fr 1fr;
   gap: clamp(18px, 2.4vw, 32px) clamp(20px, 2.8vw, 48px); min-width: 0; }
 
-/* concentric gauge — outer ring = overall run (with per-epoch ticks + best ★),
-   inner ring = live phase steps. It carries everything the bar used to. */
+/* concentric gauge — outer ring = overall run, drawn in ink (the pen's own
+   colour) and crowned gold once the run completes; inner ring = live phase
+   steps in the phase ink. A fine machined tick bezel rings both. */
 .gauge { position: relative; width: clamp(248px, 25vw, 304px); aspect-ratio: 1; }
 .gauge svg { width: 100%; height: 100%; transform: rotate(-90deg); }
 .g-bg, .g-ring { fill: none; }
 .g-bg { stroke: color-mix(in srgb, var(--text) 8%, transparent); }
 .g-ring { stroke-linecap: round;
   transition: stroke-dashoffset 0.6s var(--ease), stroke 0.5s var(--ease), opacity 0.3s var(--ease); }
-.g-ring.run  { stroke: url(#ringGrad); stroke-width: 13; }
-.g-ring.run.done { stroke: var(--st-completed); }           /* the whole run is complete — crown the outer ring gold */
-.g-ring.step { stroke: var(--phasecol); stroke-width: 7; }  /* live phase's steps; gold in the gap between phases, blank at run end */
-/* epoch divider ticks ringing the gauge, and the gold best-epoch ★ */
-.g-tick { stroke: var(--line-2); stroke-width: 1.5; stroke-linecap: round; }
+.g-ring.run  { stroke: url(#ringGrad); stroke-width: 13; }   /* overall run sweeps the display spectrum */
+.g-ring.run.done { stroke: var(--st-completed); }            /* the whole run is complete — crown the outer ring gold */
+.rs1 { stop-color: var(--g1); } .rs2 { stop-color: var(--g2); } .rs3 { stop-color: var(--g3); }
+.rs4 { stop-color: var(--g4); } .rs5 { stop-color: var(--g5); } .rs6 { stop-color: var(--g6); }
+.rs7 { stop-color: var(--g7); } .rs8 { stop-color: var(--g8); }
+.g-ring.step { stroke: var(--phasecol); stroke-width: 7; }   /* live phase's steps; gold in the gaps between phases, blank at run end */
+/* machined bezel (72 hairline ticks), epoch divider ticks, gold best-epoch ★ */
+.g-bezel line { stroke: color-mix(in srgb, var(--text) 14%, transparent); stroke-width: 1; }
+.g-tick { stroke: color-mix(in srgb, var(--text) 30%, transparent); stroke-width: 1.5; stroke-linecap: round; }
 .g-best { fill: var(--gold); font-size: 14px; font-weight: 700; text-anchor: middle;
   dominant-baseline: central; font-family: var(--sans);
   filter: drop-shadow(0 0 3px color-mix(in srgb, var(--gold) 55%, transparent)); }
-.rs1 { stop-color: var(--c1); } .rs2 { stop-color: var(--c2); } .rs3 { stop-color: var(--c3); }
-.rs4 { stop-color: var(--c4); } .rs5 { stop-color: var(--c5); } .rs6 { stop-color: var(--c6); }
-.rs7 { stop-color: var(--c7); } .rs8 { stop-color: var(--c8); }
 .gauge-center { position: absolute; inset: 0; display: flex; flex-direction: column;
   align-items: center; justify-content: center; }
 .g-pct { display: flex; align-items: baseline; gap: 3px; font-family: var(--mono);
   font-variant-numeric: tabular-nums; }
-.g-pct b { font-size: 4rem; font-weight: 550; letter-spacing: -0.045em; line-height: 1; }
-.g-pct span { font-size: 1.4rem; color: var(--dim); }
-.gauge-center i { font-style: normal; font-size: 0.7rem; font-weight: 550;
-  letter-spacing: 0.02em; color: var(--faint); margin-top: 9px; }
+.g-pct b { font-size: 3.8rem; font-weight: 600; letter-spacing: -0.02em; line-height: 1; }
+.g-pct span { font-size: 1.3rem; color: var(--dim); }
+.gauge-center i { font-style: normal; font-family: var(--mono); font-size: 0.62rem;
+  font-weight: 500; letter-spacing: 0.14em; text-transform: uppercase;
+  color: var(--faint); margin-top: 9px; }
 
 /* phase / epoch / step readout under the gauge */
 .hero-meta { display: flex; align-items: center; justify-content: center; gap: 16px; flex-wrap: wrap;
   font-size: 0.86rem; color: var(--dim); font-variant-numeric: tabular-nums; }
-.hero-meta b { color: var(--text); font-weight: 550; font-family: var(--mono); }
+.hero-meta b { color: var(--text); font-weight: 500; font-family: var(--mono); }
 .hm-sep { color: var(--faint); }
-.hm-phase { font-style: normal; padding: 2px 10px; border-radius: 100px; font-size: 0.68rem;
-  font-weight: 600; letter-spacing: 0.01em; white-space: nowrap; }
+.hm-phase { font-style: normal; padding: 2px 10px; border-radius: 100px;
+  font-family: var(--mono); font-size: 0.6rem; font-weight: 600;
+  letter-spacing: 0.1em; text-transform: uppercase; white-space: nowrap; }
 .hm-phase.is-train { color: var(--st-training);
   background: color-mix(in srgb, var(--st-training) 10%, transparent);
   border: 1px solid color-mix(in srgb, var(--st-training) 26%, transparent); }
@@ -785,21 +813,19 @@ body::before {
   background: color-mix(in srgb, var(--st-validating) 10%, transparent);
   border: 1px solid color-mix(in srgb, var(--st-validating) 26%, transparent); }
 
-/* ── KPI cells — a uniform grid; learning rate and GPU memory are peers of the
-   loss / throughput / ETA cells, not a separate strip. ───────────── */
+/* ── KPI cells — a uniform grid; engraved capitals label ink numerals ── */
 .kpi { min-width: 0; max-width: 100%; overflow: hidden; }   /* a long value clips, never overlaps a neighbour */
-.k-label { display: block; font-size: 0.72rem; font-weight: 550; letter-spacing: 0.01em;
-  color: var(--faint); margin-bottom: 8px;
+.k-label { display: block; margin-bottom: 8px;
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .k-val { display: flex; align-items: baseline; gap: 8px; font-family: var(--mono);
-  font-size: 1.58rem; font-weight: 550; letter-spacing: -0.02em;
+  font-size: 1.5rem; font-weight: 500;
   font-variant-numeric: tabular-nums; white-space: nowrap; }
 .k-val .star { color: var(--gold); font-size: 0.92rem; }
-.k-val .k-note { font-size: 0.82rem; font-weight: 500; color: var(--dim); letter-spacing: 0; }
+.k-val .k-note { font-size: 0.8rem; font-weight: 400; color: var(--dim); }
 /* a multi-group LR range is a longer string — step the value down so it never
    collides with the neighbouring cell */
-.k-val.is-range { font-size: 1.12rem; }
-.k-sub { margin-top: 5px; font-size: 0.74rem; color: var(--faint); font-family: var(--mono);
+.k-val.is-range { font-size: 1.08rem; }
+.k-sub { margin-top: 5px; font-size: 0.72rem; color: var(--faint); font-family: var(--mono);
   font-variant-numeric: tabular-nums; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 /* GPU-memory usage bar — sits where the sub line would, fills with the used /
    total ratio and turns red near capacity so memory pressure is obvious */
@@ -808,23 +834,22 @@ body::before {
 .kpi .gbar i { display: block; height: 100%; width: 0%; border-radius: inherit; background: var(--good);
   transition: width 0.5s var(--ease), background 0.4s var(--ease); }
 
-/* ── Step graph — the live per-step loss for the active phase, filling the
-   opposite flank on its own. A hand-rolled SVG (filled area + line + leading
-   dot) that auto-scales to its rolling window and takes the phase's colour
-   (train blue, validation purple). Shown only while a step is in progress, in
-   step with the throughput / ETA readouts. ── */
+/* ── Strip chart — the live per-step loss for the active phase, filling the
+   opposite flank on its own. The pen head sits fixed at the right edge and
+   the paper scrolls beneath it: each sample advances the trace one fixed
+   step, in the phase's ink. Shown only while a step is in progress, in step
+   with the throughput / ETA readouts. ── */
 .stepgraph { flex: 1; display: flex; flex-direction: column; gap: 9px; min-width: 0; }
 .sg-head { display: flex; align-items: baseline; gap: 11px; }
-.sg-title { font-size: 0.72rem; font-weight: 550; letter-spacing: 0.01em; color: var(--faint); }
 .sg-head .hm-phase { padding: 1px 8px; }
 .sg-body { position: relative; flex: 1; min-height: clamp(118px, 15vw, 188px); width: 100%; }
 .sg-body svg { display: block; width: 100%; height: 100%; }
 .spark-empty { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
-  font-size: 0.78rem; color: var(--faint); letter-spacing: 0.01em; }
+  font-family: var(--mono); font-size: 0.72rem; color: var(--faint); letter-spacing: 0.02em; }
 .sg-foot { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 2px 14px;
   font-family: var(--mono); font-size: 0.68rem; color: var(--faint); font-variant-numeric: tabular-nums; }
 
-/* ── Charts — frosted-glass cards over the ambient washes.
+/* ── Charts — recorder sheets: ink traces over true graph paper.
       The grid (and its top margin) only exist once a chart is mounted, so no
       empty placeholder reserves space before the first epoch. ── */
 .charts { display: block; }
@@ -832,29 +857,19 @@ body::before {
 .grid:empty { display: none; }
 /* a lone trailing chart (odd count) is centred instead of leaving an empty cell */
 .grid > .chart:last-child:nth-child(odd) { grid-column: 1 / -1; justify-self: center; width: calc(50% - 9px); }
-.chart { position: relative; background: var(--glass); border: 1px solid var(--line); border-radius: 18px;
-  box-shadow: inset 0 1px 0 var(--glass-edge), var(--card-shadow); padding: 16px 18px 12px;
-  backdrop-filter: blur(20px) saturate(1.5); -webkit-backdrop-filter: blur(20px) saturate(1.5);
-  transition: border-color 0.35s var(--ease), box-shadow 0.45s var(--ease);
+.chart { position: relative; background: var(--panel); border: 1px solid var(--line); border-radius: 12px;
+  box-shadow: var(--edge), var(--shadow); padding: 16px 18px 12px;
+  transition: border-color 0.35s var(--ease);
   animation: rise 0.5s var(--ease) both; }
-/* hover highlight — no motion. The card holds still while a soft golden halo
-   blooms around it and a warm sheen rises from the top edge; the border warms
-   to gold too. Always gold (never the run-state accent) — the same note of
-   excellence as the best ★ and a completed run. */
-.chart::after { content: ''; position: absolute; inset: 0; border-radius: inherit; pointer-events: none;
-  opacity: 0; transition: opacity 0.45s var(--ease);
-  background: radial-gradient(135% 95% at 50% -12%, color-mix(in srgb, var(--gold) 15%, transparent), transparent 60%); }
-.chart:hover { border-color: color-mix(in srgb, var(--gold) 46%, var(--line-2));
-  box-shadow: inset 0 1px 0 var(--glass-edge),
-    0 0 0 1px color-mix(in srgb, var(--gold) 18%, transparent),
-    0 16px 40px color-mix(in srgb, var(--gold) 18%, transparent), var(--card-shadow); }
-.chart:hover::after { opacity: 1; }
+/* hover — the border warms to gold, the same note of excellence as the best ★
+   and a completed run; the sheet itself holds perfectly still */
+.chart:hover { border-color: color-mix(in srgb, var(--gold) 45%, var(--line-2)); }
 .hovdot { transition: cx 0.09s linear, cy 0.09s linear; }
 .chart-head { display: flex; align-items: center; gap: 12px; margin-bottom: 10px; }
-.chart-name { font-size: 0.92rem; font-weight: 650; letter-spacing: -0.01em; }
+.chart-name { font-size: 0.9rem; font-weight: 600; letter-spacing: -0.01em; }
 .legend { display: inline-flex; gap: 11px; margin-left: 2px; font-size: 0.74rem; color: var(--dim); }
-.legend span { display: inline-flex; align-items: center; gap: 5px; white-space: nowrap; }
-.legend i { width: 8px; height: 8px; border-radius: 50%; }
+.legend span { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
+.legend i { width: 13px; height: 3px; border-radius: 2px; }   /* a trace segment, not a dot */
 .chart-acts { margin-left: auto; display: inline-flex; gap: 6px; opacity: 0; transition: opacity 0.2s var(--ease); }
 .chart:hover .chart-acts, .chart-acts:focus-within { opacity: 1; }
 .cbtn { font-family: var(--mono); font-size: 0.66rem; font-weight: 600; letter-spacing: 0.04em;
@@ -869,18 +884,16 @@ body::before {
 
 /* ── Run details — configuration · environment · model ────── */
 .meta { display: grid; grid-template-columns: repeat(3, 1fr); column-gap: 0; row-gap: 26px;
-  background: var(--glass); border: 1px solid var(--line); border-radius: 18px;
-  box-shadow: inset 0 1px 0 var(--glass-edge), var(--card-shadow);
-  backdrop-filter: blur(20px) saturate(1.5); -webkit-backdrop-filter: blur(20px) saturate(1.5);
+  background: var(--panel); border: 1px solid var(--line); border-radius: 12px;
+  box-shadow: var(--edge), var(--shadow);
   padding: 24px clamp(12px, 1.6vw, 22px) 20px; margin-top: 18px; }
 /* vertical hairlines divide the three columns */
 .meta > div { padding: 2px clamp(20px, 2.6vw, 40px); }
 .meta > div + div { border-left: 1px solid var(--line); }
-.meta h2 { font-size: 0.82rem; font-weight: 600; letter-spacing: 0.005em;
-  color: var(--dim); margin-bottom: 11px; }
+.meta h2 { color: var(--dim); margin-bottom: 12px; }
 .kv { display: flex; flex-direction: column; }
 .kv-row { display: flex; justify-content: space-between; align-items: baseline; gap: 12px;
-  padding: 7px 8px; margin: 0 -8px; border-radius: 7px; font-size: 0.8rem; cursor: pointer; user-select: none;
+  padding: 7px 8px; margin: 0 -8px; border-radius: 6px; font-size: 0.8rem; cursor: pointer; user-select: none;
   transition: background 0.15s var(--ease); }
 .kv-row:hover { background: var(--hover); }
 .kv-row:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
@@ -899,12 +912,11 @@ body::before {
 
 /* ── Tooltip · toast · footer ──────────────────────────────── */
 .tip { position: fixed; z-index: 90; pointer-events: none; min-width: 116px; padding: 9px 12px;
-  border-radius: 10px; background: var(--tip-bg); border: 1px solid var(--line-2);
-  backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px);
+  border-radius: 8px; background: var(--tip-bg); border: 1px solid var(--line-2);
   box-shadow: var(--shadow); font-size: 0.74rem; opacity: 0; transition: opacity 0.12s var(--ease); }
 .tip.show { opacity: 1; }
-.tip-title { color: var(--faint); font-weight: 600; font-size: 0.72rem; letter-spacing: 0.005em;
-  margin-bottom: 5px; }
+.tip-title { color: var(--faint); font-family: var(--mono); font-weight: 500; font-size: 0.6rem;
+  letter-spacing: 0.1em; text-transform: uppercase; margin-bottom: 5px; }
 .tip-row { display: flex; justify-content: space-between; gap: 14px; padding: 1px 0; }
 .tip-row .tk { display: inline-flex; align-items: center; gap: 6px; color: var(--dim); }
 .tip-row .tk i { width: 8px; height: 8px; border-radius: 50%; }
@@ -914,11 +926,10 @@ body::before {
   color: var(--gold); font-size: 0.76rem; font-weight: 600; opacity: 0; pointer-events: none;
   box-shadow: var(--shadow); transition: opacity 0.2s var(--ease), transform 0.2s var(--ease); }
 .toast.show { opacity: 1; transform: translate(-50%, 0); }
-footer { padding: 36px 0 0; text-align: center; color: var(--faint);
-  font-size: 0.7rem; font-family: var(--mono); letter-spacing: 0.04em; }
+footer { padding: 36px 0 0; text-align: center; }
 
 @media (max-width: 1080px) {
-  /* stack: gauge on top, then the KPI grid, then the step graph */
+  /* stack: gauge on top, then the KPI grid, then the strip chart */
   .hero-grid { display: flex; flex-direction: column; align-items: stretch; gap: 28px; max-width: 560px; }
   .hero-center { order: -1; border: 0; padding: 0; }
   .hero-side { gap: 20px; }
@@ -936,15 +947,15 @@ footer { padding: 36px 0 0; text-align: center; color: var(--faint);
   .meta > div + div { border-top: 1px solid var(--line); padding-top: 24px; }
   .meta > div:nth-child(3) { grid-column: auto; }
   .top { gap: 12px; }
-  .brand-name { font-size: 1.4rem; }
+  .brand-name { font-size: 1.22rem; }
   .top-meta { order: 4; width: 100%; margin-left: 0; }
   .pill { margin-left: auto; }
   .gauge { width: 214px; }
-  .g-pct b { font-size: 3.1rem; }
-  .g-pct span { font-size: 1.1rem; }
+  .g-pct b { font-size: 3rem; }
+  .g-pct span { font-size: 1.05rem; }
 }
 @media (max-width: 460px) {
-  .k-val { font-size: 1.3rem; }
+  .k-val { font-size: 1.26rem; }
   .kpi-grid { gap: 16px 24px; }
 }
 @media (prefers-reduced-motion: reduce) {
@@ -968,7 +979,7 @@ _HTML_SHELL = r"""<!DOCTYPE html>
 } catch (e) { document.documentElement.dataset.theme = 'dark'; } })();</script>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400..700&family=JetBrains+Mono:wght@400..600&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
 <style>
 __T4A_CSS__
 </style>
@@ -982,11 +993,6 @@ __T4A_CSS__
       <a class="brand-link" href="https://github.com/tomoking2004/train4all" target="_blank" rel="noopener" aria-label="train4all on GitHub">
         <span class="brand-name">train4all</span>
         <svg class="gh" viewBox="0 0 24 24" aria-hidden="true">
-          <defs>
-            <linearGradient id="ghGrad" x1="0" y1="0" x2="1" y2="0.25">
-              <stop class="gs1" offset="0"/><stop class="gs2" offset="0.5"/><stop class="gs3" offset="1"/>
-            </linearGradient>
-          </defs>
           <path d="M12 .297c-6.63 0-12 5.373-12 12 0 5.303 3.438 9.8 8.205 11.385.6.113.82-.258.82-.577 0-.285-.01-1.04-.015-2.04-3.338.724-4.042-1.61-4.042-1.61C4.422 18.07 3.633 17.7 3.633 17.7c-1.087-.744.084-.729.084-.729 1.205.084 1.838 1.236 1.838 1.236 1.07 1.835 2.809 1.305 3.495.998.108-.776.417-1.305.76-1.605-2.665-.3-5.466-1.332-5.466-5.93 0-1.31.465-2.38 1.235-3.22-.135-.303-.54-1.523.105-3.176 0 0 1.005-.322 3.3 1.23.96-.267 1.98-.399 3-.405 1.02.006 2.04.138 3 .405 2.28-1.552 3.285-1.23 3.285-1.23.645 1.653.24 2.873.12 3.176.765.84 1.23 1.91 1.23 3.22 0 4.61-2.805 5.625-5.475 5.92.42.36.81 1.096.81 2.22 0 1.606-.015 2.896-.015 3.286 0 .315.21.69.825.57C20.565 22.092 24 17.592 24 12.297c0-6.627-5.373-12-12-12"/>
         </svg>
       </a>
@@ -1059,6 +1065,7 @@ __T4A_CSS__
                 <stop class="rs7" offset="0.9"/><stop class="rs8" offset="1"/>
               </linearGradient>
             </defs>
+            <g id="g-bezel"></g>
             <circle class="g-bg" cx="150" cy="150" r="124" stroke-width="13"/>
             <circle class="g-ring run" id="ring-run" cx="150" cy="150" r="124" stroke-dasharray="779.11" stroke-dashoffset="779.11"/>
             <circle class="g-bg" cx="150" cy="150" r="100" stroke-width="7"/>
@@ -1139,8 +1146,8 @@ document.addEventListener('DOMContentLoaded', function () {
   function themeColors() {
     const cs = getComputedStyle(document.documentElement);
     const v = (n) => cs.getPropertyValue(n).trim();
-    return { bg: v('--bg'), text: v('--text'), dim: v('--dim'), faint: v('--faint'),
-      line: v('--line'), gold: v('--gold'),
+    return { bg: v('--bg'), panel: v('--panel'), text: v('--text'), dim: v('--dim'), faint: v('--faint'),
+      line: v('--line'), grid1: v('--grid-1'), grid2: v('--grid-2'), gold: v('--gold'),
       pal: [v('--c1'), v('--c2'), v('--c3'), v('--c4'), v('--c5'), v('--c6'), v('--c7'), v('--c8')] };
   }
   /* phase-fixed colours from the spectrum — train is always blue, val /
@@ -1312,6 +1319,18 @@ document.addEventListener('DOMContentLoaded', function () {
     e.style.opacity = f > 0.001 ? '1' : '0';   /* hide the round-cap dot at 0 % (e.g. standby) */
   }
 
+  /* machined bezel — 72 hairline ticks ringing the gauge, drawn once */
+  (function () {
+    const g = el('g-bezel'); if (!g) return;
+    let s = '';
+    for (let i = 0; i < 72; i++) {
+      const a = (i / 72) * 2 * Math.PI;
+      s += '<line x1="' + (150 + 131.5 * Math.cos(a)).toFixed(1) + '" y1="' + (150 + 131.5 * Math.sin(a)).toFixed(1)
+        + '" x2="' + (150 + 134 * Math.cos(a)).toFixed(1) + '" y2="' + (150 + 134 * Math.sin(a)).toFixed(1) + '"/>';
+    }
+    g.innerHTML = s;
+  })();
+
   /* ── gauge detail — epoch divider ticks + the best-epoch ★, set around the
      outer ring. The svg is rotated -90° so its 0° sits at top, so ticks use
      plain angles; the ★ is counter-rotated +90° so the glyph stays upright. */
@@ -1382,13 +1401,17 @@ document.addEventListener('DOMContentLoaded', function () {
   function fmtGB(g) { return g >= 100 ? g.toFixed(0) : g.toFixed(g >= 10 ? 1 : 2); }
   function isStepping(d) { return !!(d.last_phase && d.max_step && d.current_step) && d.status === 'training'; }
 
-  function sparkSVG(vals, W, H, phase) {
-    const C = themeColors(), col = phasePal(C, [phase || 'train'])[0];   /* phase hue — echoes that phase's curve below */
+  function sparkSVG(vals, W, H, phase, cap) {
+    const C = themeColors(), col = phasePal(C, [phase || 'train'])[0];   /* phase ink — echoes that phase's curve below */
     const PADX = 3, PADT = 10, PADB = 8, n = vals.length;
     let mn = Infinity, mx = -Infinity;
     for (const v of vals) { if (v < mn) mn = v; if (v > mx) mx = v; }
     if (mn === mx) { mn -= 0.5; mx += 0.5; }
-    const X = (i) => n < 2 ? W / 2 : PADX + (i / (n - 1)) * (W - 2 * PADX);
+    /* strip chart: the pen head sits fixed at the right edge and the paper
+       scrolls beneath it — each sample advances the trace one fixed step
+       left, so the window fills the width exactly when the buffer is full */
+    const dx = (W - 2 * PADX) / Math.max((cap || n) - 1, 1);
+    const X = (i) => W - PADX - (n - 1 - i) * dx;
     const Y = (v) => PADT + (1 - (v - mn) / (mx - mn)) * (H - PADT - PADB);
     let dLine = '';
     for (let i = 0; i < n; i++) dLine += (i ? 'L' : 'M') + X(i).toFixed(1) + ' ' + Y(vals[i]).toFixed(1);
@@ -1398,12 +1421,16 @@ document.addEventListener('DOMContentLoaded', function () {
     return '<svg viewBox="0 0 ' + W + ' ' + H + '" xmlns="http://www.w3.org/2000/svg">'
       + '<defs><linearGradient id="spGrad" x1="0" y1="0" x2="0" y2="1">'
       + '<stop offset="0" stop-color="' + col + '" stop-opacity="0.22"/>'
-      + '<stop offset="1" stop-color="' + col + '" stop-opacity="0"/></linearGradient></defs>'
+      + '<stop offset="1" stop-color="' + col + '" stop-opacity="0"/></linearGradient>'
+      + '<pattern id="sgmm" x="' + PADX + '" y="' + PADT + '" width="12" height="12" patternUnits="userSpaceOnUse">'
+      + '<path d="M12 0H0V12" fill="none" stroke="' + C.grid1 + '" stroke-width="1"/></pattern></defs>'
+      + '<rect x="' + PADX + '" y="' + PADT + '" width="' + (W - 2 * PADX) + '" height="' + (H - PADT - PADB) + '" fill="url(#sgmm)"/>'
+      + '<line x1="' + (W - PADX) + '" y1="' + PADT + '" x2="' + (W - PADX) + '" y2="' + base + '" stroke="' + C.line + '" stroke-width="1"/>'
       + '<path d="' + dArea + '" fill="url(#spGrad)"/>'
-      + '<path d="' + dLine + '" fill="none" stroke="' + col + '" stroke-width="1.8" '
+      + '<path d="' + dLine + '" fill="none" stroke="' + col + '" stroke-width="2" '
       + 'stroke-linejoin="round" stroke-linecap="round" vector-effect="non-scaling-stroke"/>'
       + '<circle cx="' + lx + '" cy="' + ly + '" r="5.4" fill="' + col + '" opacity="0.18"/>'
-      + '<circle cx="' + lx + '" cy="' + ly + '" r="2.7" fill="' + col + '" stroke="' + C.bg + '" stroke-width="1.4"/>'
+      + '<circle cx="' + lx + '" cy="' + ly + '" r="2.7" fill="' + col + '" stroke="' + C.panel + '" stroke-width="1.4"/>'
       + '</svg>';
   }
 
@@ -1437,7 +1464,7 @@ document.addEventListener('DOMContentLoaded', function () {
     sparkSig = sig;
     if (!vals.length) { body.innerHTML = '<div class="spark-empty">' + (stepping ? 'awaiting steps…' : '—') + '</div>'; return; }
     const H = Math.max(40, Math.round(body.clientHeight || 120));
-    body.innerHTML = sparkSVG(vals, W, H, ph);
+    body.innerHTML = sparkSVG(vals, W, H, ph, d.step_loss_cap || 96);
   }
 
   /* Learning rate and GPU memory are standing telemetry — like the best-metric
@@ -1539,14 +1566,23 @@ document.addEventListener('DOMContentLoaded', function () {
     const Y = (v) => PT + (1 - (tf(v) - mn) / (mx - mn)) * (H - PT - PB);
     const k = cid(metric), pal = phasePal(C, series.map(([p]) => p));
     if (ch) ch.geom = { X, Y, maxLen, series, pal };   /* shared with hover for the readout dots */
-    let s = '<svg id="svg-' + k + '" viewBox="0 0 ' + W + ' ' + H + '" xmlns="http://www.w3.org/2000/svg" font-family="JetBrains Mono, ui-monospace, monospace">';
+    let s = '<svg id="svg-' + k + '" viewBox="0 0 ' + W + ' ' + H + '" xmlns="http://www.w3.org/2000/svg" font-family="IBM Plex Mono, ui-monospace, monospace">';
     s += '<defs>';
     series.forEach((_, i) => { const c = pal[i];
       s += '<linearGradient id="g-' + k + '-' + i + '" x1="0" y1="0" x2="0" y2="1">'
         + '<stop offset="0" stop-color="' + c + '" stop-opacity="0.13"/>'
         + '<stop offset="0.8" stop-color="' + c + '" stop-opacity="0.01"/>'
         + '<stop offset="1" stop-color="' + c + '" stop-opacity="0"/></linearGradient>'; });
+    /* graph paper — a two-tier engineering grid clipped to the plot and
+       anchored at its corner; the labelled nice-tick rules carry the reading */
+    s += '<pattern id="mm-' + k + '" x="' + PL + '" y="' + PT + '" width="12" height="12" patternUnits="userSpaceOnUse">'
+      + '<path d="M12 0H0V12" fill="none" stroke="' + C.grid1 + '" stroke-width="1"/></pattern>'
+      + '<pattern id="cm-' + k + '" x="' + PL + '" y="' + PT + '" width="60" height="60" patternUnits="userSpaceOnUse">'
+      + '<path d="M60 0H0V60" fill="none" stroke="' + C.grid2 + '" stroke-width="1"/></pattern>';
     s += '</defs>';
+    const PW = W - PL - PR, PH = H - PT - PB;
+    s += '<rect x="' + PL + '" y="' + PT + '" width="' + PW + '" height="' + PH + '" fill="url(#mm-' + k + ')"/>'
+      + '<rect x="' + PL + '" y="' + PT + '" width="' + PW + '" height="' + PH + '" fill="url(#cm-' + k + ')"/>';
     /* y grid — nice ticks; on log scale they snap to powers of ten */
     const yTicks = useLog ? logTicks(mn, mx, Math.max(3, Math.round((H - PT - PB) / 52)))
                           : niceTicksLinear(mn, mx, Math.max(3, Math.round((H - PT - PB) / 52)));
@@ -1556,8 +1592,8 @@ document.addEventListener('DOMContentLoaded', function () {
       s += '<line x1="' + PL + '" y1="' + gy.toFixed(1) + '" x2="' + (W - PR) + '" y2="' + gy.toFixed(1) + '" stroke="' + C.line + '" stroke-width="1" vector-effect="non-scaling-stroke"/>';
       s += '<text x="' + (PL - 9) + '" y="' + (gy + 3.8).toFixed(1) + '" text-anchor="end" font-size="11" fill="' + C.faint + '">' + fmtTick(useLog ? Math.pow(10, tv) : tv) + '</text>';
     });
-    /* baseline */
-    s += '<line x1="' + PL + '" y1="' + (H - PB) + '" x2="' + (W - PR) + '" y2="' + (H - PB) + '" stroke="' + C.line + '" stroke-width="1" vector-effect="non-scaling-stroke"/>';
+    /* sheet frame — the recorder paper's edge */
+    s += '<rect x="' + PL + '" y="' + PT + '" width="' + PW + '" height="' + PH + '" fill="none" stroke="' + C.line + '" stroke-width="1" vector-effect="non-scaling-stroke"/>';
     /* x labels — epoch numbers */
     const st = xTickStep(maxLen, W - PL - PR);
     for (let e = st; e <= maxLen; e += st) {
@@ -1589,11 +1625,11 @@ document.addEventListener('DOMContentLoaded', function () {
       if (!dLine) return;
       const dArea = dLine + 'L' + X(le).toFixed(1) + ' ' + (H - PB) + 'L' + X(0).toFixed(1) + ' ' + (H - PB) + 'Z';
       s += '<path d="' + dArea + '" fill="url(#g-' + k + '-' + i + ')"/>';
-      s += '<path d="' + dLine + '" fill="none" stroke="' + c + '" stroke-width="1.7" stroke-linejoin="round" stroke-linecap="round" vector-effect="non-scaling-stroke"/>';
+      s += '<path d="' + dLine + '" fill="none" stroke="' + c + '" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" vector-effect="non-scaling-stroke"/>';
     });
     /* hover crosshair + one readout dot per series (positioned by attachHover) */
     s += '<line class="hovline" x1="0" y1="' + PT + '" x2="0" y2="' + (H - PB) + '" stroke="' + C.faint + '" stroke-opacity="0.6" stroke-width="1" vector-effect="non-scaling-stroke" visibility="hidden"/>';
-    series.forEach((_, i) => { s += '<circle class="hovdot" r="4" fill="' + pal[i] + '" stroke="' + C.bg + '" stroke-width="1.6" visibility="hidden"/>'; });
+    series.forEach((_, i) => { s += '<circle class="hovdot" r="4" fill="' + pal[i] + '" stroke="' + C.panel + '" stroke-width="1.6" visibility="hidden"/>'; });
     s += '</svg>';
     return s;
   }
@@ -1649,7 +1685,7 @@ document.addEventListener('DOMContentLoaded', function () {
     clone.querySelectorAll('.hovdot').forEach((dt) => dt.remove());
     const inner = clone.innerHTML;
     const title = titleCase(metric);
-    const SANS = 'Inter, system-ui, sans-serif';
+    const SANS = 'IBM Plex Sans, system-ui, sans-serif';
     let head = '<text x="' + PL + '" y="26" font-family="' + SANS + '" font-size="15" font-weight="700" fill="' + C.text + '">' + esc(title) + '</text>';
     let lx = PL + title.length * 8.6 + 22;
     const ch = charts[metric];
@@ -1661,8 +1697,8 @@ document.addEventListener('DOMContentLoaded', function () {
         head += '<text x="' + (lx + 9) + '" y="25" font-family="' + SANS + '" font-size="12" fill="' + C.dim + '">' + esc(name) + '</text>';
         lx += 9 + name.length * 7.1 + 18; });
     }
-    const out = '<svg xmlns="' + NS + '" viewBox="0 0 ' + W + ' ' + (H + HEAD) + '" font-family="JetBrains Mono, ui-monospace, monospace">'
-      + '<rect width="' + W + '" height="' + (H + HEAD) + '" fill="' + C.bg + '"/>'
+    const out = '<svg xmlns="' + NS + '" viewBox="0 0 ' + W + ' ' + (H + HEAD) + '" font-family="IBM Plex Mono, ui-monospace, monospace">'
+      + '<rect width="' + W + '" height="' + (H + HEAD) + '" fill="' + C.panel + '"/>'
       + head + '<g transform="translate(0 ' + HEAD + ')">' + inner + '</g></svg>';
     const blob = new Blob(['<?xml version="1.0" encoding="UTF-8"?>\n' + out], { type: 'image/svg+xml' });
     const a = document.createElement('a'); a.download = metric.replace(/_/g, '-') + '.svg';
@@ -1837,7 +1873,7 @@ document.addEventListener('DOMContentLoaded', function () {
       renderKV('cfg-grid', d.config); renderKV('env-grid', d.env_summary); renderKV('model-grid', d.model_summary);
       staticDone = true;
     }
-    setText('footer', 'train4all' + (VERSION ? ' v' + VERSION : '') + ' · ' + (d.updated_at || ''));
+    setText('footer', 'train4all' + (VERSION && VERSION !== 'unknown' ? ' v' + VERSION : '') + ' · ' + (d.updated_at || ''));
   }
 
   setFavicon(accentColor());
