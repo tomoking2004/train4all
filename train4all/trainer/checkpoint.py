@@ -56,7 +56,7 @@ class Checkpoint:
         path: Source path, used only for display in :meth:`print_summary`.
     """
 
-    # ── On-disk schema ────────────────────────────────────────────────────────
+    # ── On-Disk Schema ────────────────────────────────────────────────────────
     # Bump when the saved layout changes incompatibly. Read paths stay tolerant
     # of older files (see ``training_state``), so this is informational metadata.
     VERSION: str = "1.1"
@@ -65,7 +65,7 @@ class Checkpoint:
         self._raw = raw
         self.path = Path(path) if path is not None else None
 
-    # ── Construction & persistence ────────────────────────────────────────────
+    # ── Construction & Persistence ────────────────────────────────────────────
 
     @classmethod
     def load(cls, path: Path | str, *, map_location: Any = "cpu") -> Checkpoint:
@@ -259,7 +259,7 @@ class Checkpoint:
             print_fn=print_fn,
         )
 
-    # ── Dunder helpers ────────────────────────────────────────────────────────
+    # ── Dunder Helpers ────────────────────────────────────────────────────────
 
     def __bool__(self) -> bool:
         return bool(self._raw)
