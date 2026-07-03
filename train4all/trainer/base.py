@@ -1,4 +1,5 @@
 import abc
+import contextlib
 import gc
 import importlib.metadata
 import inspect
@@ -1530,10 +1531,8 @@ class BaseTrainer(abc.ABC):
         result["Python"]  = platform.python_version()
         result["PyTorch"] = torch.__version__
         for pkg in ("torchvision", "torchaudio"):
-            try:
+            with contextlib.suppress(importlib.metadata.PackageNotFoundError):
                 result[pkg] = importlib.metadata.version(pkg)
-            except importlib.metadata.PackageNotFoundError:
-                pass
         return result
 
     def print_env_summary(self) -> None:
