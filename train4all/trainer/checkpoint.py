@@ -121,8 +121,10 @@ class Checkpoint:
                 "optimizer":      optimizer,
                 "scheduler":      scheduler,
                 "scaler":         scaler,
-                "training_state": training_state,
-                "metrics":        metrics,
+                # Stored as {}, not None: the ``training_state`` / ``metrics``
+                # properties are typed as always returning a dict.
+                "training_state": training_state or {},
+                "metrics":        metrics or {},
             })
         return cls(data)
 
