@@ -1,3 +1,4 @@
+import contextlib
 import os
 import shutil
 import stat
@@ -70,9 +71,7 @@ def copy_dir(
             shutil.copytree(item, target, dirs_exist_ok=True)
         else:
             shutil.copy2(item, target)
-            try:
+            with contextlib.suppress(OSError):
                 target.chmod(target.stat().st_mode | stat.S_IWRITE)
-            except OSError:
-                pass
 
     return dst_path

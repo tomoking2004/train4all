@@ -1,13 +1,12 @@
+import contextlib
 import logging
 import sys
 from collections.abc import Callable, Mapping
 from pathlib import Path
 from typing import ClassVar, Literal, Protocol, runtime_checkable
 
-try:
+with contextlib.suppress(AttributeError, ValueError):
     sys.stdout.reconfigure(encoding="utf-8")
-except (AttributeError, ValueError):
-    pass
 
 
 type LogLevel = Literal["info", "debug", "warn"]
