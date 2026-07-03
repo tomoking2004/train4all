@@ -41,6 +41,7 @@ from train4all.utils import (
     remove_dir,
     replace_dict_keys,
     save_curves_plot,
+    separator_rule,
 )
 
 __all__ = ["BaseTrainer"]
@@ -162,7 +163,6 @@ class BaseTrainer(abc.ABC):
     # ── Console / display tunables ────────────────────────────────────────────
     _KEY_WIDTH: int           = 32     # column width for printed metric / summary tables
     _KEEP_PROGRESS_BAR: bool  = False  # persist tqdm bars after an epoch completes
-    _SEPARATOR_PAD: int       = 48     # separator rule width = _KEY_WIDTH + this pad
     _DASH_THROTTLE_S: float   = 0.5    # minimum seconds between dashboard step writes
     _DASH_EXTRA_WAIT_S: float = 0.5    # extra wait after dashboard finalize
 
@@ -2019,7 +2019,7 @@ class BaseTrainer(abc.ABC):
         weights_only: bool = False,
     ) -> None:
         self.print(f"{label} ...")
-        self.print(f" {'─' * (self._KEY_WIDTH + self._SEPARATOR_PAD)}")
+        self.print(separator_rule(self._KEY_WIDTH))
         ckpt = self._read_checkpoint(path)
         if not ckpt:
             return

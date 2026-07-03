@@ -58,6 +58,12 @@ def _render_tree(
     return lines
 
 
+def separator_rule(key_width: int) -> str:
+    """Return the horizontal rule drawn under a :func:`print_dict_tree` header,
+    for callers that print such a header themselves ahead of a tree."""
+    return f" {'─' * (key_width + _SEPARATOR_PAD)}"
+
+
 def print_dict_tree(
     tree: Mapping[str, object],
     *,
@@ -83,7 +89,7 @@ def print_dict_tree(
     lines: list[str] = []
     if header is not None:
         lines.append(header)
-        lines.append(f" {'─' * (key_width + _SEPARATOR_PAD)}")
+        lines.append(separator_rule(key_width))
     lines += _render_tree(tree, key_width, float_fmt, max_depth)
     if trailing_newline:
         lines.append("")

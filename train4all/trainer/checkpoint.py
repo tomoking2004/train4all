@@ -27,8 +27,7 @@ from typing import Any
 
 import torch
 
-from train4all.utils.dict_utils import MetricTable
-from train4all.utils.log_utils import Printer, print_dict_tree
+from train4all.utils import MetricTable, Printer, print_dict_tree
 
 __all__ = ["Checkpoint"]
 
