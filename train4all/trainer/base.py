@@ -1630,7 +1630,7 @@ class BaseTrainer(abc.ABC):
             print_fn=self.print,
         )
 
-    def print(self, msg: str | None = None, level: LogLevel = "info", indent: int = 0) -> None:
+    def print(self, msg: str | None = None, level: LogLevel = "info", *, indent: int = 0) -> None:
         """Forward a message to the logger."""
         self.logger.log(msg, level=level, indent=indent)
 
