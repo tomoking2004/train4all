@@ -57,6 +57,7 @@ train4all is a minimal PyTorch training framework. Subclass `BaseTrainer`, imple
     - [Metrics](#metrics)
       - [Weighted averaging](#weighted-averaging)
     - [Custom Training Loop](#custom-training-loop)
+    - [Resetting](#resetting)
     - [State Inspection](#state-inspection)
     - [Configuration](#configuration)
     - [Snapshot](#snapshot)
@@ -462,6 +463,24 @@ Both building blocks honor `accumulation_steps`: `execute_epoch` flushes each cy
 ```python
 for i, batch in enumerate(train_loader, 1):
     trainer.execute_step(batch, phase="train", step=i)
+```
+
+---
+
+### Resetting
+
+Composable building blocks for starting a *fresh* run without recreating the trainer — the same pieces `prepare_training()` calls internally when `resume=False` (see [`resume`](#constructor-parameters)):
+
+```python
+trainer.reset_trainer()          # setup + training state + metrics + cache + RNGs + scaler
+trainer.clear_artifacts()        # delete checkpoints/, metrics/, plots/, dashboard files from run_dir
+
+# Or reset one piece at a time:
+trainer.clear_setup()            # discard models/optimizer/scheduler; next ensure_setup() rebuilds them
+trainer.ensure_setup()           # call setup() exactly once; a no-op on later calls
+trainer.reset_training_state()   # epoch counter, best-metric tracking, early-stopping counters
+trainer.reset_seed()             # reseed Python / NumPy / Torch RNGs from `seed`
+trainer.reset_scaler()           # rebuild the AMP GradScaler, discarding fp16 loss-scale adaptation
 ```
 
 ---
