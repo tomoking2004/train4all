@@ -662,7 +662,7 @@ class BaseTrainer(abc.ABC):
                     monitor_value = val_metrics.get(self.monitor)
 
                 self.finalize_train_epoch(monitor_value)
-                self.save_artifacts(phases=["train", "val"])
+                self.save_artifacts()
                 self._dash_update()
                 self.on_train_epoch_end(epoch)
 
