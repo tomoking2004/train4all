@@ -5,6 +5,11 @@ from collections.abc import Callable, Mapping
 from pathlib import Path
 from typing import ClassVar, Literal, Protocol, runtime_checkable
 
+# The console output is typographic — box rules, tree connectors, emoji headers.
+# A Windows terminal still defaults to a legacy code page (cp932, cp1252), which
+# raises UnicodeEncodeError on the first ├─ and takes the whole run down with it.
+# Suppressed rather than required: a replaced stdout (pytest's capture, a
+# notebook) has no reconfigure, and needs none.
 with contextlib.suppress(AttributeError, ValueError):
     sys.stdout.reconfigure(encoding="utf-8")
 
