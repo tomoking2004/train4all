@@ -2,6 +2,7 @@ from train4all.utils.dashboard import Dashboard, DashboardConfig
 from train4all.utils.dict_utils import MetricTable, replace_dict_keys
 from train4all.utils.file_utils import copy_dir, remove_dir
 from train4all.utils.log_utils import (
+    DEFAULT_KEY_WIDTH,
     LogLevel,
     Printer,
     TrainerLogger,
@@ -16,6 +17,7 @@ from train4all.utils.plot_utils import (
 )
 
 __all__ = [
+    "DEFAULT_KEY_WIDTH",
     "Dashboard",
     "DashboardConfig",
     "LogLevel",

@@ -14,6 +14,7 @@ with contextlib.suppress(AttributeError, ValueError):
     sys.stdout.reconfigure(encoding="utf-8")
 
 __all__ = [
+    "DEFAULT_KEY_WIDTH",
     "LogLevel",
     "Printer",
     "TrainerLogger",
@@ -24,6 +25,15 @@ __all__ = [
 
 type LogLevel = Literal["info", "debug", "warn"]
 type Printer = Callable[[str], object]
+
+DEFAULT_KEY_WIDTH = 32
+"""Column width for the leaf keys of a printed tree.
+
+The one place the width is decided: :class:`~train4all.BaseTrainer` adopts it as
+``_KEY_WIDTH`` and :meth:`~train4all.Checkpoint.print_summary` as its default, so
+the trainer's tables and a standalone checkpoint dump line up by reference rather
+than by coincidence.
+"""
 
 _SEPARATOR_PAD = 48  # separator rule width = key_width + this pad
 
@@ -82,7 +92,7 @@ def print_dict_tree(
     *,
     max_depth: int | None = None,
     header: str | None = None,
-    key_width: int = 32,
+    key_width: int = DEFAULT_KEY_WIDTH,
     float_fmt: int = 4,
     trailing_newline: bool = True,
     print_fn: Printer | None = None,

@@ -27,7 +27,7 @@ from typing import Any
 
 import torch
 
-from train4all.utils import MetricTable, Printer, print_dict_tree
+from train4all.utils import DEFAULT_KEY_WIDTH, MetricTable, Printer, print_dict_tree
 
 __all__ = ["Checkpoint"]
 
@@ -244,7 +244,9 @@ class Checkpoint:
             out["extras"] = {k: _describe(v) for k, v in self.extras.items()}
         return out
 
-    def print_summary(self, *, key_width: int = 32, print_fn: Printer | None = None) -> None:
+    def print_summary(
+        self, *, key_width: int = DEFAULT_KEY_WIDTH, print_fn: Printer | None = None,
+    ) -> None:
         """Pretty-print :meth:`summary` as a tree.
 
         Args:
