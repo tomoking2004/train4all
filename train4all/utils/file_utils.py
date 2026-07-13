@@ -1,5 +1,4 @@
 import contextlib
-import os
 import shutil
 import stat
 from collections.abc import Callable, Sequence
@@ -8,10 +7,14 @@ from pathlib import Path
 __all__ = ["copy_dir", "remove_dir"]
 
 
-def _on_remove_error(func: Callable[..., None], path: str, exc: BaseException) -> None:
-    """Make a read-only path writable and retry the failed removal."""
+def _on_remove_error(func: Callable[..., None], path: str, _exc: BaseException) -> None:
+    """Make a read-only path writable and retry the failed removal.
+
+    The signature is fixed by ``shutil.rmtree(onexc=...)``; the exception itself is
+    not consulted, since the retry either succeeds or the ``OSError`` below gives up.
+    """
     try:
-        os.chmod(path, stat.S_IWRITE)
+        Path(path).chmod(stat.S_IWRITE)
         func(path)
     except OSError:
         pass
