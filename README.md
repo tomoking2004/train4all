@@ -5,7 +5,7 @@
 ![Python](https://img.shields.io/badge/python-%E2%89%A53.12-blue)
 ![PyTorch](https://img.shields.io/badge/pytorch-%E2%89%A52.0-orange)
 ![License](https://img.shields.io/badge/license-MIT-green)
-![Version](https://img.shields.io/badge/version-0.7.0-informational)
+![Version](https://img.shields.io/badge/version-0.8.0-informational)
 
 **Implement three methods. Get a complete training loop.**
 
