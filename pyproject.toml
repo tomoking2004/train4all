@@ -21,6 +21,7 @@ classifiers = [
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
     "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Typing :: Typed",
 ]
 dependencies = [
     "matplotlib",
@@ -40,6 +41,12 @@ Repository = "https://github.com/tomoking2004/train4all"
 [tool.setuptools.packages.find]
 # Without this the flat layout also ships `tests` as a top-level package.
 include = ["train4all*"]
+
+[tool.setuptools.package-data]
+# Ship the PEP 561 marker, without which every annotation in the package is
+# invisible to a downstream type checker — and the `Typing :: Typed` classifier
+# above would be a claim nothing backs.
+train4all = ["py.typed"]
 
 [tool.ruff]
 # The target version is not repeated here: ruff reads it from `requires-python`, so
