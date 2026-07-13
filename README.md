@@ -24,9 +24,10 @@ train4all is a minimal PyTorch training framework. Subclass `BaseTrainer`, imple
 **Features at a glance**
 
 - **Zero boilerplate** — one subclass, three methods, full training loop
+- **Composable epochs** — an epoch is whatever sequence of [`Phase`](#phases) objects you pass to `train()`; drop in a phase that measures expensive metrics on a subset of the training data every N epochs, and everything downstream (curves, dashboard, early stopping) follows
 - **Mixed precision** — automatic bf16 AMP on CUDA by default for lower VRAM and faster steps; opt into `"fp16"` for older cards or disable with `amp=False`. TF32 + cuDNN autotuner switch on automatically for unseeded runs (`tf32`)
 - **Scale on small GPUs** — gradient accumulation (`accumulation_steps`) simulates a larger effective batch at no extra memory cost, and per-model `torch.compile` (`compile=True`) unlocks graph-level speedups
-- **Automatic checkpointing** — `latest.pth` and `best.pth` saved after every epoch; periodic saves every N epochs, plus a standalone `Checkpoint` reader to inspect any file with no model or subclass
+- **Automatic checkpointing** — `latest.pth` after every epoch and `best.pth` whenever the monitored metric improves; periodic saves every N epochs, plus a standalone `Checkpoint` reader to inspect any file with no model or subclass
 - **Early stopping** — patience-based on any `monitor` metric (`min`/`max` mode), with automatic best-checkpoint tracking
 - **Live web dashboard** — a self-contained, dependency-free panel: progress gauge, live KPIs, per-step loss graph, per-metric charts, light & dark themes
 - **Flexible metrics** — epoch- and step-level recording, JSON export, matplotlib curve plots
@@ -43,9 +44,11 @@ train4all is a minimal PyTorch training framework. Subclass `BaseTrainer`, imple
   - [Installation](#installation)
   - [Quick Start](#quick-start)
   - [Constructor Parameters](#constructor-parameters)
+    - [Class Constants](#class-constants)
   - [API Reference](#api-reference)
     - [Abstract Methods](#abstract-methods)
       - [Optional: test-only metrics](#optional-test-only-metrics)
+    - [Phases](#phases)
     - [Training \& Evaluation](#training--evaluation)
     - [Setup Helpers](#setup-helpers)
     - [Model Management](#model-management)
@@ -64,6 +67,8 @@ train4all is a minimal PyTorch training framework. Subclass `BaseTrainer`, imple
     - [GPU Utilities](#gpu-utilities)
   - [Live Dashboard](#live-dashboard)
     - [DashboardConfig Parameters](#dashboardconfig-parameters)
+  - [Utilities](#utilities)
+  - [Development](#development)
   - [License](#license)
 
 ---
@@ -72,6 +77,12 @@ train4all is a minimal PyTorch training framework. Subclass `BaseTrainer`, imple
 
 ```bash
 pip install git+https://github.com/tomoking2004/train4all.git
+```
+
+```python
+import train4all
+
+train4all.__version__    # the installed version
 ```
 
 ---
@@ -83,7 +94,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch.utils.data import DataLoader, TensorDataset
-from train4all import BaseTrainer
+from train4all import BaseTrainer, Phase
 
 
 class MyTrainer(BaseTrainer):
@@ -118,11 +129,14 @@ def make_loader(n: int, batch_size: int = 64) -> DataLoader:
 
 
 trainer = MyTrainer(num_epochs=5, learning_rate=1e-3, run_dir="run", use_dashboard=True)
-trainer.train(make_loader(100_000), val_loader=make_loader(20_000))
+trainer.train(
+    Phase("train", make_loader(100_000), training=True),
+    Phase("val", make_loader(20_000)),
+)
 trainer.test(make_loader(10_000), use_best=True)
 ```
 
-Running it opens the [live dashboard](#live-dashboard) and streams a clean console log — a reproducibility banner (environment, resolved config, model), then a per-phase metric table and automatic checkpoint saves on every epoch:
+Running it opens the [live dashboard](#live-dashboard) and streams a clean console log — a reproducibility banner (environment, resolved config, model, optimization, status), then a per-phase metric table and automatic checkpoint saves on every epoch:
 
 <div align="center">
   <img alt="train4all console output — reproducibility banner and the first epoch" src="assets/logs.png" width="62%">
@@ -144,16 +158,16 @@ Every parameter is optional, and all except `num_epochs` are **keyword-only**, s
 | `amp` | `None` | Automatic mixed precision. `None` auto-enables bf16 on CUDA (no-op on CPU/MPS); `True`/`"bf16"`/`"fp16"` requests it explicitly (warns if the device is not CUDA); `False` forces full precision. |
 | `tf32` | `None` | Allow TF32 fp32 matmuls/convolutions and the cuDNN autotuner on CUDA (Ampere+). `None` auto-enables it only when `seed` is unset (speed when not reproducing); `True`/`False` force it. CUDA-only; complementary to `amp`. |
 | `patience` | `None` | Early-stopping patience in epochs. Disabled when `None`. |
-| `monitor` | `"loss"` | Validation metric driving best-checkpoint selection and early stopping. |
+| `monitor` | `"loss"` | Metric driving best-checkpoint selection and early stopping. |
 | `monitor_mode` | `"min"` | `"min"` (lower is better, e.g. loss) or `"max"` (higher is better, e.g. accuracy). |
-| `training_phases` | `["train"]` | Phase names that trigger gradient updates. |
+| `monitor_phase` | `"val"` | The [phase](#phases) `monitor` is read from. Just a name — any phase in the schedule can drive selection and early stopping. |
 | `device` | auto | `"cuda"`, `"cuda:1"`, `"mps"`, or `"cpu"`. Auto-detected when `None` — prefers CUDA, then MPS, then CPU. On a multi-GPU machine, pick a specific GPU with `"cuda:<index>"`. |
 | `seed` | `None` | Global random seed for Python, NumPy, and PyTorch. |
 | `run_dir` | `"run"` | Output directory for checkpoints, metrics, logs, and plots. |
-| `run_snapshot_dir` | `None` | Mirror directory for a lightweight copy of `run_dir` via `snapshot_run()`. |
+| `run_snapshot_dir` | `None` | Mirror directory for `run_dir`. When set, `train()` [snapshots](#snapshot) the run there after every epoch. Must lie outside `run_dir`. |
 | `resume` | `True` | Resume from `latest.pth` at the start of training. When `False`, `prepare_training()` first clears the run's previous artifacts (`checkpoints/`, `metrics/`, `plots/`, and dashboard files) and starts a fresh log, so a fresh run never inherits stale files — `config.json` and any user files in `run_dir` are kept, and evaluation-only flows (calling `test()` without training) are unaffected. |
 | `save_interval` | `None` | Save a periodic checkpoint every N epochs. |
-| `record_step_metrics` | `False` | Record per-step metrics during training phases. |
+| `record_step_metrics` | `False` | Record per-step metrics. The master switch; each phase decides whether it takes part via `Phase.record_steps`, which defaults to the training phases. |
 | `step_metric_names` | `None` | Subset of metric names to record at the step level. `None` records all. |
 | `pbar_metric_names` | `None` | Metric names shown in the tqdm postfix. `None` hides all metrics (GPU memory still shown on CUDA). |
 | `use_progress_bar` | `True` | Show tqdm progress bars during epoch iteration. |
@@ -162,7 +176,34 @@ Every parameter is optional, and all except `num_epochs` are **keyword-only**, s
 | `use_dashboard` | `False` | Enable the live web dashboard. |
 | `dashboard_config` | `None` | Dashboard appearance and behaviour (`DashboardConfig`). |
 
-Purely cosmetic display settings are **class constants** rather than constructor arguments — set once per trainer type, not per run, so override them in your subclass: `_KEY_WIDTH` (column width for printed metric/summary tables, default `32`) and `_KEEP_PROGRESS_BAR` (keep tqdm bars on screen after each epoch, default `False`).
+### Class Constants
+
+Settings that belong to a trainer *type* rather than to a run — the run's output layout and the console/dashboard tuning — are **class constants**, not constructor arguments. They are set once per trainer, so override them in your subclass:
+
+```python
+class MyTrainer(BaseTrainer):
+    _CHECKPOINTS_DIRNAME = "ckpt"   # run/ckpt/ instead of run/checkpoints/
+    _KEY_WIDTH = 40
+```
+
+| Constant | Default | Description |
+| :-- | :-- | :-- |
+| `_CHECKPOINTS_DIRNAME` | `"checkpoints"` | Checkpoint subdirectory of `run_dir`. |
+| `_METRICS_DIRNAME` | `"metrics"` | Metrics subdirectory of `run_dir`. |
+| `_PLOTS_DIRNAME` | `"plots"` | Plots subdirectory of `run_dir`. |
+| `_LOG_FILENAME` | `"log.txt"` | Console log written inside `run_dir`. |
+| `_CONFIG_FILENAME` | `"config.json"` | The file [`from_config`](#configuration) reads back. |
+| `_CHECKPOINT_LATEST` | `"latest"` | Stem of the every-epoch checkpoint (`latest.pth`). |
+| `_CHECKPOINT_BEST` | `"best"` | Stem of the best-epoch checkpoint (`best.pth`). |
+| `_METRICS_EPOCH` | `"epoch_metrics"` | Stem of the epoch-metrics JSON export. |
+| `_METRICS_STEP` | `"step_metrics"` | Stem of the step-metrics JSON export. |
+| `_TEST_PHASE` | `"test"` | Name of the [phase](#phases) `test()` builds. |
+| `_KEY_WIDTH` | `32` | Column width for printed metric and summary tables. |
+| `_KEEP_PROGRESS_BAR` | `False` | Keep tqdm bars on screen after each epoch completes. |
+| `_GPU_TEMP_WARN_C` | `85` | `print_gpu_temperature()` warns above this, in °C. |
+| `_GPU_MEM_TTL_S` | `2.0` | Seconds an `nvidia-smi` memory reading stays cached. |
+| `_DASH_THROTTLE_S` | `0.5` | Minimum seconds between dashboard step writes. |
+| `_DASH_EXTRA_WAIT_S` | `0.5` | Extra wait after the dashboard is finalized. |
 
 ---
 
@@ -186,13 +227,13 @@ def compute_loss(self, batch: Any) -> torch.Tensor:
 def compute_metrics(self, batch: Any) -> dict[str, float]:
     # Return a flat dict of metric name → scalar value.
     # Called immediately after compute_loss; the step cache is populated.
-    # Used by train, val, and any custom phase.
+    # The default metric function for every phase that doesn't bring its own.
     ...
 ```
 
 #### Optional: test-only metrics
 
-Train and validation share `compute_metrics` so the per-epoch path stays cheap. The **test** phase runs once for final reporting, so it has its own override for heavier, report-only metrics. The default delegates to `compute_metrics`, so test mirrors validation until you override it:
+The final evaluation runs once, so it can afford heavier, report-only metrics that would be wasteful every epoch. `compute_test_metrics` is the metric function `test()` gives the phase it builds; the default delegates to `compute_metrics`, so test mirrors validation until you override it:
 
 ```python
 def compute_test_metrics(self, batch: Any) -> dict[str, float]:
@@ -201,17 +242,71 @@ def compute_test_metrics(self, batch: Any) -> dict[str, float]:
     return metrics
 ```
 
-Only the `"test"` phase (used by `trainer.test()`) routes here; every other phase uses `compute_metrics`.
+Nothing routes here by phase *name* — this is simply a default a [`Phase`](#phases) can be given, so any phase can carry it: `Phase("audit", audit_loader, metric_fn=self.compute_test_metrics)`.
+
+---
+
+### Phases
+
+An epoch is a sequence of **phases**, and `train()` takes that sequence directly — the loop has no built-in notion of "train" and "val" beyond the names you choose. A `Phase` is the one place a pass over data is described:
+
+| Field | Default | Description |
+| :-- | :-- | :-- |
+| `name` | — | Keys the metric tables, the plots, the dashboard legend, and `monitor_phase`. Unique within a run. |
+| `loader` | — | The `DataLoader` iterated for this phase. |
+| `training` | `False` | Run with gradients and step the optimizer. Most phases only measure, so evaluation is the default. |
+| `metric_fn` | `None` | This phase's per-batch metric function. `None` uses the trainer's `compute_metrics`. Named for what it holds — a *function*, not the metric values `metrics` means everywhere else. |
+| `every` | `1` | Run only on epochs divisible by this, so an expensive measurement need not be paid every epoch. |
+| `record_steps` | `None` | Take part in `record_step_metrics`. `None` follows `training`. |
+
+A `Phase` is frozen, and two derived accessors answer the questions its raw fields only imply. The type of a metric function is exported as `MetricFn`, for annotating your own:
+
+```python
+from train4all import MetricFn, Phase     # MetricFn = Callable[[Any], dict[str, float]]
+
+phase.records_steps      # bool  — record_steps, resolved against training
+phase.runs_at(epoch)     # bool  — whether the phase runs at this 1-based epoch
+```
+
+The canonical run is two phases:
+
+```python
+trainer.train(
+    Phase("train", train_loader, training=True),
+    Phase("val", val_loader),
+)
+```
+
+Anything else is the same expression with more phases. To keep the training pass cheap, compute only the loss there and measure the expensive metrics periodically on a subset of the same data:
+
+```python
+trainer.train(
+    Phase("train", train_loader, training=True, metric_fn=lambda _: {}),
+    Phase("train_eval", train_subset_loader, every=5),
+    Phase("val", val_loader),
+)
+```
+
+`metric_fn=lambda _: {}` suppresses only the metric *function* — `loss` is always recorded — so the training pass reports loss alone while `train_eval` reports the full metric set on a slice of the training data, every fifth epoch. The three phases then plot as three curves, each with its own ink, in every chart.
+
+Best-checkpoint selection and early stopping read `monitor` from the phase named by `monitor_phase` (`"val"` by default), taking only the value produced **this** epoch — so a monitored phase that sits out an epoch (`every > 1`) yields no value rather than a stale one. Point `monitor_phase` at any phase you like:
+
+```python
+MyTrainer(num_epochs=40, patience=5, monitor="accuracy", monitor_mode="max", monitor_phase="val")
+```
 
 ---
 
 ### Training & Evaluation
 
 ```python
-trainer.train(train_loader, val_loader=val_loader)
+trainer.train(
+    Phase("train", train_loader, training=True),
+    Phase("val", val_loader),
+)
 ```
 
-Run the full training loop. Calls `prepare_training()` first, then iterates epochs, runs validation after each train epoch when `val_loader` is provided, and handles early stopping, checkpointing, and dashboard updates automatically.
+Run the full training loop. Calls `prepare_training()` first, then iterates epochs, running the given [phases](#phases) in order within each one, and handles early stopping, checkpointing, and dashboard updates automatically.
 
 ```python
 metrics: dict[str, float] = trainer.test(test_loader, use_best=True)
@@ -275,15 +370,17 @@ def on_training_start(self) -> None: ...
 def on_training_end(self) -> None: ...
 def on_exception(self, exc: BaseException) -> None: ...                # loop aborted; re-raised afterwards
 
-# Epoch
+# Epoch — the whole epoch, once per epoch
 def on_train_epoch_start(self, epoch: int) -> None: ...
 def on_train_epoch_end(self, epoch: int) -> None: ...
-def on_epoch_start(self, epoch: int | None, loader: DataLoader, phase: str) -> None: ...
-def on_epoch_end(self, epoch: int | None, loader: DataLoader, metrics: dict[str, float], phase: str) -> None: ...
+
+# Phase — once per phase within the epoch
+def on_phase_start(self, epoch: int | None, phase: Phase) -> None: ...
+def on_phase_end(self, epoch: int | None, phase: Phase, metrics: dict[str, float]) -> None: ...
 
 # Step
-def on_step_start(self, step: int | None, batch: Any, phase: str) -> None: ...
-def on_step_end(self, step: int | None, batch: Any, metrics: dict[str, float], phase: str) -> None: ...
+def on_step_start(self, step: int | None, batch: Any, phase: Phase) -> None: ...
+def on_step_end(self, step: int | None, batch: Any, metrics: dict[str, float], phase: Phase) -> None: ...
 
 # Optimization
 def on_set_training_mode(self, training: bool) -> None: ...
@@ -295,10 +392,12 @@ def on_save_checkpoint(self, checkpoint: Checkpoint) -> None: ...      # attach 
 def on_load_checkpoint(self, checkpoint: Checkpoint) -> None: ...      # read it back after restore
 ```
 
+The phase and step hooks receive the [`Phase`](#phases) itself, not just its name, so a hook can branch on what the pass actually *is* (`phase.training`, `phase.loader`) rather than on a string.
+
 A few timing guarantees worth knowing:
 
-- The step cache is cleared **before** `on_epoch_start` fires.
-- Epoch metrics for the completed phase are already recorded **before** `on_epoch_end` fires, so `get_epoch_metrics()` reflects the current epoch inside that hook.
+- The step cache is cleared **before** `on_phase_start` fires.
+- Epoch metrics for the completed phase are already recorded **before** `on_phase_end` fires, so `get_epoch_metrics()` reflects the current epoch inside that hook.
 - `on_exception` fires for any error — including `KeyboardInterrupt` (Ctrl-C) — and the exception is **re-raised** afterwards. No checkpoint is auto-saved, since a mid-epoch save would persist an incomplete state.
 - `on_save_checkpoint` / `on_load_checkpoint` fire only for **full** checkpoints; weights-only saves/loads stay pure (models + extras). They pair with `update_checkpoint_extras()` for round-tripping custom state across a resume.
 
@@ -319,7 +418,7 @@ def compute_metrics(self, batch):
     return {"acc": (preds == batch["y"]).float().mean().item()}
 ```
 
-The cache is cleared automatically at the start of each epoch and phase, before `on_epoch_start` fires. Use `get_cache(key, default=...)` to supply a fallback when the key may be absent.
+The cache is cleared automatically at the start of each phase, before `on_phase_start` fires — `clear_cache()` empties it by hand, should you ever need to. Use `get_cache(key, default=...)` to supply a fallback when the key may be absent.
 
 ---
 
@@ -327,7 +426,8 @@ The cache is cleared automatically at the start of each epoch and phase, before 
 
 ```python
 # Saving
-trainer.save_checkpoint("run/my_checkpoint.pth")         # full checkpoint at any path
+trainer.save_checkpoints()                                # latest + best + periodic, as the loop does
+trainer.save_checkpoint("run/my_checkpoint.pth")          # full checkpoint at any path
 trainer.save_weights("run/weights_only.pth")              # model weights only
 trainer.backup_checkpoint("run/checkpoints/latest.pth")   # copy with .bak suffix
 
@@ -389,14 +489,18 @@ from train4all import Checkpoint
 
 ckpt = Checkpoint.load("run/checkpoints/best.pth")   # map_location="cpu" by default
 ckpt.print_summary()                  # tree: version, models + param counts, components, training state, metrics
+ckpt.summary()                        # the same overview, as a plain dict
 
-ckpt.version                          # on-disk format version
+ckpt.version                          # on-disk format version (Checkpoint.VERSION is what a save stamps)
 ckpt.models["encoder"]                # a raw state dict — no architecture required
 ckpt.model_summary()                  # {name: {"parameters": int, "tensors": int}}
 ckpt.training_state["best_epoch"]     # legacy key names normalized automatically
 ckpt.extras                           # custom metadata embedded via update_checkpoint_extras()
 ckpt.metrics                          # recorded {"epoch_metrics": ..., "step_metrics": ...}
+ckpt.metric_names()                   # sorted union of metric names across both tables
 ckpt.optimizer_state                  # None for a weights-only checkpoint
+ckpt.scheduler_state                  # likewise
+ckpt.scaler_state                     # likewise
 ckpt.raw                              # the underlying dict, for anything not surfaced above
 ```
 
@@ -407,18 +511,25 @@ ckpt.raw                              # the underlying dict, for anything not su
 ```python
 # Epoch-level
 table = trainer.get_epoch_metrics()                       # dict[metric, dict[phase, list[float]]]
-table = trainer.get_epoch_metrics(metric_names=["loss"], phases=["val"])
+table = trainer.get_epoch_metrics(metric_names=["loss"], phase_names=["val"])
 path  = trainer.export_epoch_metrics()                    # writes metrics/epoch_metrics.json
         trainer.save_epoch_metric_plots()                 # writes plots/*.png via matplotlib
 
 # Step-level (requires record_step_metrics=True)
 table = trainer.get_step_metrics()
-table = trainer.get_step_metrics(phases=["train"])
+table = trainer.get_step_metrics(phase_names=["train"])
 path  = trainer.export_step_metrics()                     # writes metrics/step_metrics.json
         trainer.save_step_metric_plots()
 
 # Resetting
 trainer.clear_metrics()                                   # reset both epoch and step tables
+
+# Output paths
+trainer.get_epoch_metrics_path()                          # run/metrics/epoch_metrics.json
+trainer.get_step_metrics_path()                           # run/metrics/step_metrics.json
+trainer.get_metrics_path("custom")                        # run/metrics/custom.json
+trainer.get_metric_plot_path("loss", phase_name="train", prefix="step")
+                                                          # run/plots/step_loss_train.png
 ```
 
 #### Weighted averaging
@@ -440,9 +551,12 @@ When you need more control than `train()` provides, build your own loop using th
 ```python
 trainer.prepare_training()  # print env, save config, run setup(), optional resume
 
+train = Phase("train", train_loader, training=True)
+val   = Phase("val", val_loader)
+
 for epoch, max_epoch in trainer.epoch_iterator():
-    train_metrics = trainer.execute_epoch(train_loader, phase="train")
-    val_metrics   = trainer.execute_epoch(val_loader,   phase="val")
+    train_metrics = trainer.execute_phase(train, epoch=epoch)
+    val_metrics   = trainer.execute_phase(val,   epoch=epoch)
 
     trainer.finalize_train_epoch(val_metrics.get(trainer.monitor))
     trainer.save_artifacts()   # checkpoints + metric plots + JSON export
@@ -454,15 +568,15 @@ for epoch, max_epoch in trainer.epoch_iterator():
 For step-level control:
 
 ```python
-metrics = trainer.execute_epoch(loader, phase="train", print_metrics=True)
-metrics = trainer.execute_step(batch,  phase="val",   print_metrics=True)
+metrics = trainer.execute_phase(train, print_metrics=True)
+metrics = trainer.execute_step(batch, val, print_metrics=True)
 ```
 
-Both building blocks honor `accumulation_steps`: `execute_epoch` flushes each cycle automatically, and `execute_step` updates the optimizer on every `accumulation_steps`-th `step` you pass:
+Both building blocks honour `accumulation_steps`: `execute_phase` flushes each cycle automatically, and `execute_step` updates the optimizer on every `accumulation_steps`-th `step` you pass:
 
 ```python
 for i, batch in enumerate(train_loader, 1):
-    trainer.execute_step(batch, phase="train", step=i)
+    trainer.execute_step(batch, train, step=i)
 ```
 
 ---
@@ -477,6 +591,9 @@ trainer.clear_artifacts()        # delete checkpoints/, metrics/, plots/, dashbo
 
 # Or reset one piece at a time:
 trainer.clear_setup()            # discard models/optimizer/scheduler; next ensure_setup() rebuilds them
+trainer.clear_models()           # drop the model registry alone
+trainer.clear_optimizer()        # drop the optimizer alone
+trainer.clear_scheduler()        # drop the scheduler alone
 trainer.ensure_setup()           # call setup() exactly once; a no-op on later calls
 trainer.reset_training_state()   # epoch counter, best-metric tracking, early-stopping counters
 trainer.reset_seed()             # reseed Python / NumPy / Torch RNGs from `seed`
@@ -492,11 +609,25 @@ trainer.is_training_complete()       # True when current_epoch >= num_epochs
 trainer.is_best_epoch()              # True if this epoch set the best monitored value
 trainer.should_stop_early()          # True if patience is exhausted
 
-trainer.print_status()               # epoch counter, best monitored value, recent metrics
-trainer.print_model_summary()        # model names and parameter counts
-trainer.print_env_summary()          # OS, CPU, RAM, GPU, Python, PyTorch versions
-trainer.print_optimization_summary() # optimizer, scheduler, and gradient accumulation
+trainer.print_status()                  # epoch counter, best monitored value, recent metrics
+trainer.print_config()                  # the resolved config, as written to config.json
+trainer.print_model_summary()           # model names and parameter counts
+trainer.print_env_summary()             # OS, CPU, RAM, GPU, Python, PyTorch versions
+trainer.print_optimization_summary()    # optimizer, scheduler, and gradient accumulation
+trainer.print_schedule_summary(*phases) # the shape of one epoch; train() prints it for you
 ```
+
+Three of those tables are also available as plain dicts — the same values the banner and the [dashboard](#live-dashboard) are built from — and `print_dict_tree` renders any dict in the trainer's own tree style:
+
+```python
+env      = trainer.get_env_summary()   # {"OS": "Ubuntu 22.04", "GPU": "cuda:0 …", …}
+model    = trainer.get_model_summary() # {"encoder": "23,508,032 params", …}
+schedule = trainer.get_schedule_summary(*phases)  # {"train": "training", "audit": "eval, every 3 epochs"}
+
+trainer.print_dict_tree(env, header="🖥️  Environment")
+```
+
+The schedule is *not* in `config.json`: [phases](#phases) are arguments to `train()`, not to the constructor, so `from_config` could not pass them back. The file holds what reconstructs the trainer; the shape of an epoch is reported where the run reports everything else.
 
 ---
 
@@ -523,7 +654,7 @@ Only `BaseTrainer` constructor arguments are consumed, so custom metadata added 
 
 ### Snapshot
 
-Copy a lightweight snapshot of `run_dir` into a mirror location at any time — useful for syncing to a cloud-backed folder during long runs:
+Set `run_snapshot_dir` and `train()` mirrors `run_dir` there **after every epoch**, once that epoch's artifacts are on disk — so the copy is always a whole epoch, and a host that vanishes mid-run (a preemptible VM, a Colab session) leaves the checkpoints behind on durable storage:
 
 ```python
 trainer = MyTrainer(
@@ -531,17 +662,23 @@ trainer = MyTrainer(
     run_dir="run",
     run_snapshot_dir="/mnt/gdrive/experiments/run",
 )
+trainer.train(...)   # every epoch is mirrored; no further wiring
+```
 
-# Or call manually:
+Nothing is excluded by default — the checkpoints are exactly what a mirror exists to preserve. Call it yourself for a snapshot at any other moment, and pass `exclude` to leave the heavy parts behind when you only want the metrics and plots:
+
+```python
 trainer.snapshot_run(exclude=["checkpoints"])
 ```
+
+The destination must lie outside `run_dir`; a mirror nested inside its own source would copy itself and grow on every epoch, so it is rejected.
 
 ---
 
 ### GPU Utilities
 
 ```python
-trainer.print_gpu_temperature()  # reads temperature via nvidia-smi; warns above 85 °C
+trainer.print_gpu_temperature()  # reads temperature via nvidia-smi; warns above _GPU_TEMP_WARN_C
 trainer.empty_cuda_cache()       # gc.collect() + torch.cuda.empty_cache()
 ```
 
@@ -549,7 +686,7 @@ trainer.empty_cuda_cache()       # gc.collect() + torch.cuda.empty_cache()
 
 ## Live Dashboard
 
-Pass `use_dashboard=True` for a live, dependency-free dashboard in your browser: an overall-progress gauge, a KPI grid (loss, best validation, throughput, ETA, learning rate, GPU memory), a live per-step loss graph, and a per-metric SVG chart for each metric. It follows your light/dark theme and embeds its data inline so it stays viewable offline.
+Pass `use_dashboard=True` for a live, dependency-free dashboard in your browser: an overall-progress gauge, a KPI grid (current metric, best monitored value, throughput, ETA, learning rate, GPU memory), a live per-step loss graph, and a per-metric SVG chart for each metric. It follows your light/dark theme and embeds its data inline so it stays viewable offline.
 
 <div align="center">
   <img alt="train4all dashboard — a completed run" src="assets/dashboard-complete.png" width="100%">
@@ -572,15 +709,80 @@ trainer = MyTrainer(
 
 ### DashboardConfig Parameters
 
+Whether there is a dashboard at all is `use_dashboard`, not a setting here.
+
 | Parameter | Default | Description |
 | :-- | :-- | :-- |
-| `enabled` | `True` | Master switch; `False` disables the dashboard entirely. |
 | `filename` | `"dashboard.html"` | HTML shell filename written inside `run_dir`. |
 | `data_filename` | `"dashboard_data.json"` | JSON data file polled by the browser. |
 | `poll_interval_ms` | `500` | Browser polling interval in milliseconds. |
 | `open_on_start` | `True` | Open in the system's default browser when training begins. |
 | `stale_after_ms` | `30000` | Mark the run **Offline** after this many ms without a heartbeat. An absolute liveness timeout, independent of `poll_interval_ms` — size it above your slowest synchronous pause (large checkpoint saves, heavy plotting). |
 | `use_server` | `True` | Start a local HTTP server (required for Chrome/Edge on `file://` pages). |
+
+The trainer drives the dashboard for you, but the engine is exported for anyone feeding it from their own loop. `Dashboard` writes the HTML shell once on `initialize()`, overwrites a small JSON file on every `update()`, and inlines that data on `finalize()` so the page survives the process; `mark_started()` sets the elapsed-time origin, `heartbeat()` keeps a long synchronous pause from reading as *Offline*, `open_browser()` raises the page on demand, and `url` / `path` / `active` / `elapsed` / `poll_s` report where and how it is running. `PhaseSpec` is the flat projection of a [`Phase`](#phases) it renders a schedule from (`name`, `training`, `steps`, `every`).
+
+---
+
+## Utilities
+
+`train4all.utils` holds the helpers the trainer is built from. Nothing here is needed to train — they are exported for reuse:
+
+```python
+from train4all.utils import TrainerLogger, print_dict_tree, remove_dir
+```
+
+| Name | Description |
+| :-- | :-- |
+| `MetricTable` | Type of the metric tables: `dict[metric, dict[phase, list[float]]]`. |
+| `TrainerLogger` | The `log()` protocol the [`logger`](#constructor-parameters) argument accepts. |
+| `UnifiedLogger` | The default logger — console, plus a file in `run_dir`. |
+| `LogLevel` | A log level: `"info"`, `"debug"`, or `"warn"`. |
+| `Printer` | Type of a `print_fn` callback. |
+| `print_dict_tree` | Render a nested dict as the `├─`/`└─` tree the trainer prints. |
+| `separator_rule` | The horizontal rule drawn under a tree header. |
+| `DEFAULT_KEY_WIDTH` | The `32` behind [`_KEY_WIDTH`](#class-constants) — the one place the tree's column width is decided, so the trainer's tables and `Checkpoint.print_summary()` line up by reference rather than by coincidence. |
+| `save_curves_plot` | Save labelled 1-D curves to a PNG — matplotlib, without pyplot's global state. |
+| `get_metric_plot_title` | Build a plot title from metric name, phase name, and prefix. |
+| `get_metric_plot_filename` | Build a plot filename from the same parts. |
+| `copy_dir` | Recursive copy with an exclude list — what [`snapshot_run()`](#snapshot) uses. Refuses a destination inside the source. |
+| `remove_dir` | Recursive delete that clears read-only flags first. |
+| `replace_dict_keys` | Rewrite substrings in nested dict keys — what `key_map` uses. |
+| `Dashboard` | The [live dashboard](#live-dashboard) engine. |
+| `DashboardConfig` | Its settings (see the table above). |
+| `PhaseSpec` | A [phase](#phases) as the dashboard sees it. |
+
+Machine introspection lives in `train4all.utils.system` — the trainer delegates to it rather than knowing how to read a Windows registry key or initialize NVML, the same way it delegates the on-disk format to `Checkpoint`:
+
+| Name | Description |
+| :-- | :-- |
+| `env_summary` | The reproducibility banner as a dict — OS, CPU, RAM, disk, GPU, CUDA, Python, PyTorch. Behind [`get_env_summary()`](#state-inspection). |
+| `os_name` | Distro on Linux, `macOS <ver>` on Darwin — not the kernel release. |
+| `cpu_name` | CPU model, from the registry / `sysctl` / `/proc/cpuinfo` rather than the bare architecture. |
+| `cuda_index` | The CUDA device index a `torch.device` resolves to. |
+| `gpu_temperature` | Current GPU temperature in °C via `nvidia-smi`. Behind [`print_gpu_temperature()`](#gpu-utilities). |
+| `empty_cuda_cache` | `gc.collect()` + `torch.cuda.empty_cache()`. |
+| `GpuProbe` | Cached GPU-memory readings for one device — NVML once, then an `nvidia-smi` fallback cached for [`_GPU_MEM_TTL_S`](#class-constants) seconds, so a per-step progress bar costs one cheap lookup. |
+
+---
+
+## Development
+
+```bash
+git clone https://github.com/tomoking2004/train4all.git
+cd train4all
+pip install -e ".[dev]"
+```
+
+| Command | Purpose |
+| :-- | :-- |
+| `pytest` | Run the suite. |
+| `pytest --cov` | Run it under coverage, which fails below 80% — the gate before a release. |
+| `ruff check` | Lint. |
+
+Coverage is a property of the *whole* suite, so its floor is enforced only when the whole suite runs — `pytest tests/test_phase.py` stays a fast, focused loop rather than a failure that says nothing about the code under test.
+
+The suite also holds this README to the code: every exported name, constructor argument, class constant, and dashboard setting must appear here, or `tests/test_public_api.py` fails. The API reference above cannot quietly fall behind the thing it describes.
 
 ---
 
