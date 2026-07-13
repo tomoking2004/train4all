@@ -5,6 +5,8 @@ import stat
 from collections.abc import Callable, Sequence
 from pathlib import Path
 
+__all__ = ["copy_dir", "remove_dir"]
+
 
 def _on_remove_error(func: Callable[..., None], path: str, exc: BaseException) -> None:
     """Make a read-only path writable and retry the failed removal."""

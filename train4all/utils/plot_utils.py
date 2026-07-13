@@ -5,6 +5,8 @@ from matplotlib.backends.backend_agg import FigureCanvasAgg
 from matplotlib.figure import Figure
 from matplotlib.ticker import MaxNLocator
 
+__all__ = ["get_metric_plot_filename", "get_metric_plot_title", "save_curves_plot"]
+
 
 def get_metric_plot_title(
     metric_name: str,
