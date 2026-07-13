@@ -48,6 +48,21 @@ include = ["train4all*"]
 # above would be a claim nothing backs.
 train4all = ["py.typed"]
 
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.coverage.run]
+source = ["train4all"]
+
+[tool.coverage.report]
+# The floor is a property of the whole suite, so it is enforced where the whole
+# suite runs — `pytest --cov` — and not on every invocation. In `addopts` it would
+# also fire on a focused run, where a single file cannot reach 80% of the package
+# and the failure says nothing about the code under test.
+fail_under = 80
+show_missing = true
+skip_covered = true
+
 [tool.ruff]
 # The target version is not repeated here: ruff reads it from `requires-python`, so
 # raising the floor there cannot leave the linter behind on an older dialect.
@@ -72,3 +87,7 @@ ignore = [
 # dashboard.py embeds the dashboard's CSS and JavaScript as string literals;
 # they are web assets, not Python, and wrapping them would only obscure them.
 "train4all/utils/dashboard.py" = ["E501"]
+# A test that overrides a lifecycle hook must carry the framework's signature
+# whether or not that test's body reads every argument. Renaming them to `_x`
+# would corrupt the very signatures these tests exist to demonstrate.
+"tests/*" = ["ARG002"]
