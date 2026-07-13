@@ -53,13 +53,23 @@ def copy_dir(
 
     Raises:
         NotADirectoryError: If *src* is not a directory.
+        ValueError: If *dst* lies inside *src*, which would copy the destination
+            into itself and grow without bound on every repeat.
     """
-    src_path = Path(src)
-    dst_path = Path(dst)
+    src_path = Path(src).resolve()
+    dst_path = Path(dst).resolve()
     excluded = set(exclude or ())
 
     if not src_path.is_dir():
         raise NotADirectoryError(f"Source is not a directory: {src_path}")
+
+    # A destination nested inside the source copies the copy. Caught here rather
+    # than left to grow: a per-epoch mirror would nest one level deeper each epoch.
+    if dst_path == src_path or dst_path.is_relative_to(src_path):
+        raise ValueError(
+            f"Destination lies inside the source, so the copy would contain itself: "
+            f"{dst_path} is within {src_path}"
+        )
 
     if overwrite and dst_path.exists():
         shutil.rmtree(dst_path, onexc=_on_remove_error)
