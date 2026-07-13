@@ -1,0 +1,4 @@
+# Line endings are LF in the repository and in every checkout, on every OS.
+# Without this they follow each contributor's core.autocrlf, which silently
+# rewrites whole files and buries real changes in the diff.
+* text=auto eol=lf
