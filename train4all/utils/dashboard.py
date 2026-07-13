@@ -23,13 +23,12 @@ quiet ambient washes) carries the colour the data inks deliberately restrain.
 
 A large progress gauge anchors the page — concentric rings inside a fine
 machined tick bezel (outer = overall run, sweeping the display spectrum and
-crowned gold once the run completes; inner = the live phase's steps, gold in
-the gaps between
-phases and blank once the run ends) with the overall percentage at
+crowned gold once the run completes; inner = the live phase's steps, gold in the
+gaps between phases and blank once the run ends) with the overall percentage at
 its centre, epoch divider ticks, and a gold ★ best-epoch marker on its rim. Run
-progress is strictly monotonic: train and validation steps both advance it
-proportionally, it never rewinds across a phase or epoch boundary, and it holds
-full once the run completes.
+progress is strictly monotonic: every phase of the epoch advances it in
+proportion to its share of the epoch's steps, it never rewinds across a phase or
+epoch boundary, and it holds full once the run completes.
 
 The gauge is flanked by a uniform KPI grid (current metric, best monitored
 value, throughput, ETA, learning rate, and a GPU-memory cell whose bar turns
@@ -47,14 +46,16 @@ a log-scale toggle, and vector export; they render at their container's exact
 pixel width (a ResizeObserver re-renders on reflow) and gridlines snap to nice
 values — powers of ten on the log scale.
 
-Every phase owns a fixed ink on a blue→violet→magenta spectrum — train blue,
-validation violet, test magenta, validated for colour-vision deficiency
-(Machado protan/deutan ΔE ≥ 12 between adjacent inks, in both themes) — so
-curves, legends, the phase badge, the inner gauge ring, and the state accents
-always agree. Red means offline (a plateau keeps the training blue — the gold
-★ carries that signal); gold is reserved for excellence (best epoch, completed
-run). No green. A fixed hairline across the top of the viewport mirrors
-overall progress in the same spectrum, and turns gold once the run completes.
+The run declares its phases, and every phase owns a fixed ink on a
+blue→violet→magenta spectrum — train blue, validation violet, test magenta,
+any further phase the next free hue — assigned once from that declared order,
+so a phase keeps its ink in every curve, legend, badge, and gauge ring on the
+page. The inks are validated for colour-vision deficiency (Machado
+protan/deutan ΔE ≥ 12 between adjacent inks, in both themes). Red means offline
+(a plateau keeps the training blue — the gold ★ carries that signal); gold is
+reserved for excellence (best epoch, completed run). No green. A fixed hairline
+across the top of the viewport mirrors overall progress in the same spectrum,
+and turns gold once the run completes.
 
 Configuration, environment, and model tables close the page — nested-dict
 config opens indented sub-groups; click any row to copy its value (a gold flash
@@ -78,31 +79,46 @@ from __future__ import annotations
 import contextlib
 import functools
 import http.server
-import importlib.metadata
 import json
+import math
 import os
 import threading
 import time
 from collections import deque
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 
-try:
-    _VERSION = importlib.metadata.version("train4all")
-except importlib.metadata.PackageNotFoundError:
-    _VERSION = "unknown"
-
+from train4all._version import __version__
 from train4all.utils.dict_utils import MetricTable
 
-__all__ = ["Dashboard", "DashboardConfig"]
+__all__ = ["Dashboard", "DashboardConfig", "PhaseSpec"]
 
 # Number of recent per-step loss samples retained for the live step-loss graph.
 # Sampled at the dashboard write cadence, so this spans roughly the last minute
 # of a phase — a "recent activity" window that complements the full epoch-level
 # history shown in the charts below.
 _STEP_HISTORY = 96
+
+
+def _json_safe(value: Any) -> Any:
+    """Replace every non-finite float with ``None``, recursively.
+
+    ``json.dumps`` happily writes bare ``NaN`` / ``Infinity``, which are not JSON: the
+    browser's ``JSON.parse`` rejects the *whole* document, so a single divergent metric
+    would blank the entire dashboard rather than just its own readout. And a metric can
+    go non-finite while the loss stays finite — a 0/0 rate, an empty-class F1 — so the
+    trainer's loss guard is no protection here. ``None`` is what the front end already
+    renders as an absent reading ("—").
+    """
+    if isinstance(value, float):
+        return value if math.isfinite(value) else None
+    if isinstance(value, dict):
+        return {k: _json_safe(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_json_safe(v) for v in value]
+    return value
 
 
 # ── Configuration ─────────────────────────────────────────────────────────────
@@ -112,32 +128,61 @@ class DashboardConfig:
     """Appearance and behaviour settings for the live training dashboard.
 
     All fields carry sensible defaults; specify only what you need to change.
+    Whether there is a dashboard at all is not settled here — that is the
+    trainer's ``use_dashboard``, the one switch.
 
     Attributes:
-        enabled:          Master switch — ``False`` disables the dashboard
-                          entirely regardless of all other settings.
-        filename:         HTML shell filename written inside ``run_dir``.
-        data_filename:    JSON data file polled by the browser on every tick.
+        filename: HTML shell filename written inside ``run_dir``.
+        data_filename: JSON data file polled by the browser on every tick.
         poll_interval_ms: Browser polling interval in milliseconds.
-        open_on_start:    Open in the system browser when
-                          :meth:`Dashboard.initialize` is called.
-        stale_after_ms:   Declare training *Offline* after this many ms without
-                          a heartbeat — an absolute timeout independent of
-                          ``poll_interval_ms``. Size it above your slowest
-                          synchronous pause (large saves, heavy plotting).
-        use_server:       Start a local HTTP server so the browser can
-                          ``fetch()`` the JSON data file — required for
-                          Chrome and Edge, which block cross-origin
-                          ``fetch()`` on ``file://`` pages. The server runs
-                          in a daemon thread and exits with the process.
+        open_on_start: Open in the system browser when
+            :meth:`Dashboard.initialize` is called.
+        stale_after_ms: Declare training *Offline* after this many ms without a
+            heartbeat — an absolute timeout independent of ``poll_interval_ms``.
+            Size it above your slowest synchronous pause (large saves, heavy
+            plotting).
+        use_server: Start a local HTTP server so the browser can ``fetch()`` the
+            JSON data file — required for Chrome and Edge, which block
+            cross-origin ``fetch()`` on ``file://`` pages. The server runs in a
+            daemon thread and exits with the process.
     """
-    enabled: bool = True
     filename: str = "dashboard.html"
     data_filename: str = "dashboard_data.json"
     poll_interval_ms: int = 500
     open_on_start: bool = True
     stale_after_ms: int = 30000
     use_server: bool = True
+
+
+# ── Phase Schedule ────────────────────────────────────────────────────────────
+
+@dataclass(frozen=True, slots=True)
+class PhaseSpec:
+    """One phase of an epoch, as the dashboard needs to see it.
+
+    The flat, serializable projection of a trainer phase: the dashboard renders
+    a schedule, not a training loop, so it takes the shape (name, gradients,
+    length, cadence) and never the DataLoader or the metric function behind it.
+    The list of these, in the order the phases run, is the dashboard's model of
+    an epoch — it lays out the progress gauge, assigns the phase inks, and
+    labels the badges from it alone.
+
+    Attributes:
+        name: Phase name, shown on the badge and in every chart legend.
+        training: Whether the phase performs gradient updates. Drives the state
+            accent, the pill, and the throughput readout.
+        steps: Steps in the phase, so overall progress can advance in proportion
+            to it. ``0`` when unknown (a length-less ``IterableDataset``), in
+            which case the gauge falls back to weighting every phase of the
+            epoch equally.
+        every: The phase runs on epochs divisible by this. Epochs that skip it
+            redistribute its share of the gauge across the phases that do run.
+    """
+
+    name: str
+    training: bool = False
+    steps: int = 0
+    every: int = 1
 
 
 # ── Dashboard ─────────────────────────────────────────────────────────────────
@@ -155,7 +200,7 @@ class Dashboard:
     switch to the *Offline* state automatically.
 
     Args:
-        config:  Appearance and behaviour settings.
+        config: Appearance and behaviour settings.
         run_dir: Directory where the HTML shell and JSON data file are written.
     """
 
@@ -168,10 +213,9 @@ class Dashboard:
         self._trainer_config: dict[str, Any] = {}
         self._env_summary: dict[str, Any] = {}
         self._model_summary: dict[str, Any] = {}
-        self._training_phases: list[str] = ["train"]
+        self._phases: list[PhaseSpec] = []
         self._monitor: str = "loss"
-        self._train_steps: int = 0
-        self._val_steps: int = 0
+        self._monitor_phase: str = "val"
         self._server_port: int | None = None
         self._last_max_step: int = 0
         self._data_lock = threading.Lock()
@@ -223,10 +267,9 @@ class Dashboard:
         trainer_config: dict[str, Any],
         env_summary: dict[str, Any] | None = None,
         model_summary: dict[str, Any] | None = None,
-        training_phases: list[str] | None = None,
+        phases: list[PhaseSpec] | None = None,
         monitor: str = "loss",
-        train_steps: int = 0,
-        val_steps: int = 0,
+        monitor_phase: str = "val",
     ) -> None:
         """Write the HTML shell and the first JSON snapshot.
 
@@ -240,25 +283,24 @@ class Dashboard:
             env_summary: System and runtime details shown in the Environment panel.
             model_summary: Registered model names and parameter counts shown in
                 the Model panel.
-            training_phases: Phase names that trigger gradient updates, used to
-                drive the state-dependent accent, gauge, and captions correctly.
-            monitor: Name of the validation metric tracked for the best-value KPI,
-                used to label it (e.g. ``"accuracy"`` → "Best Val Accuracy").
-            train_steps: Steps per training phase, used to make overall progress
-                advance proportionally and monotonically. ``0`` when unknown.
-            val_steps: Steps per validation phase. ``0`` when there is no
-                validation pass or its length is unknown.
+            phases: The run's phases, in the order they run within an epoch (see
+                :class:`PhaseSpec`). This is the dashboard's whole model of an
+                epoch: it drives the progress gauge, the phase inks, and the
+                state accents. Left empty, the gauge falls back to tracking only
+                the phase currently reporting steps.
+            monitor: Name of the metric tracked for the best-value KPI, used to
+                label it (e.g. ``"accuracy"`` → "Best Val Accuracy").
+            monitor_phase: Name of the phase that metric is read from — the other
+                half of that label.
         """
         self._started_at = datetime.now()
         self._status = "training"
         self._trainer_config = trainer_config
         self._env_summary = env_summary or {}
         self._model_summary = model_summary or {}
-        if training_phases is not None:
-            self._training_phases = training_phases
+        self._phases = list(phases or [])
         self._monitor = monitor
-        self._train_steps = train_steps
-        self._val_steps = val_steps
+        self._monitor_phase = monitor_phase
 
         self._html_path.parent.mkdir(parents=True, exist_ok=True)
         html_content = (
@@ -267,16 +309,20 @@ class Dashboard:
             .replace("__T4A_POLL_MS__", str(self._config.poll_interval_ms))
             .replace("__T4A_DATA_FILE__", self._config.data_filename)
             .replace("__T4A_STALE_MS__", str(self._config.stale_after_ms))
-            .replace("__T4A_VERSION__", _VERSION)
+            .replace("__T4A_VERSION__", __version__)
         )
         self._atomic_write(self._html_path, html_content)
-        self._write_data(0, 0, 0, 0, {}, None, "", float("inf"), None)
+        self._write_data(
+            epoch=0, max_epoch=0, step=0, max_step=0,
+            epoch_metrics={}, step_metrics=None, phase_name="",
+            best_metric=float("inf"), best_epoch=None,
+        )
 
         if self._config.use_server:
             self._start_http_server()
 
         if self._config.open_on_start:
-            self._open_browser()
+            self.open_browser()
 
         self._start_keepalive()
 
@@ -301,7 +347,7 @@ class Dashboard:
         step: int = 0,
         max_step: int = 0,
         step_metrics: dict[str, float] | None = None,
-        phase: str = "",
+        phase_name: str = "",
         learning_rate: float | list[float] | None = None,
         gpu_mem: tuple[float, float] | None = None,
     ) -> None:
@@ -313,26 +359,25 @@ class Dashboard:
         crashed one.
 
         Args:
-            epoch:             Current epoch number (1-based).
-            max_epoch:         Total number of training epochs.
-            epoch_metrics:     Accumulated per-epoch metrics keyed by metric then phase.
-            best_metric:       Best monitored validation value recorded so far.
-            best_epoch:        Epoch that achieved ``best_metric``.
+            epoch: Current epoch number (1-based).
+            max_epoch: Total number of training epochs.
+            epoch_metrics: Accumulated per-epoch metrics keyed by metric then
+                phase name.
+            best_metric: Best monitored value recorded so far.
+            best_epoch: Epoch that achieved ``best_metric``.
             epochs_no_improve: Consecutive epochs without an improvement.
             is_gradient_phase: Whether the active phase performs gradient updates.
-            step:              Current step within the epoch (1-based).
-            max_step:          Total number of steps in the epoch.
-            step_metrics:      Per-metric scalar values for the most recent step.
-            phase:             Name of the active phase (e.g. ``"train"``).
-            learning_rate:     Current optimizer learning rate(s), shown live
-                               beside the gauge — a single value, or a list of
-                               per-group rates rendered as a range. ``None``
-                               leaves the readout blank.
-            gpu_mem:           ``(used_gb, total_gb)`` GPU memory for the live
-                               footprint bar. ``None`` hides the readout.
+            step: Current step within the active phase (1-based).
+            max_step: Total number of steps in the active phase.
+            step_metrics: Per-metric scalar values for the most recent step.
+            phase_name: Name of the active phase — one of the names given to
+                :meth:`initialize` (e.g. ``"train"``).
+            learning_rate: Current optimizer learning rate(s), shown live beside
+                the gauge — a single value, or a list of per-group rates rendered
+                as a range. ``None`` leaves the readout blank.
+            gpu_mem: ``(used_gb, total_gb)`` GPU memory for the live footprint
+                bar. ``None`` hides the readout.
         """
-        if not self._config.enabled:
-            return
         if max_step > 0:
             self._last_max_step = max_step
         if learning_rate is not None:
@@ -345,20 +390,31 @@ class Dashboard:
         # that phase's colour. The true step number is kept alongside each loss
         # so the axis reports real steps, not the (throttled) sample count. The
         # framework always records a ``loss`` entry.
-        if phase and step_metrics:
+        if phase_name and step_metrics:
             loss = step_metrics.get("loss")
             if isinstance(loss, (int, float)) and loss == loss and abs(loss) != float("inf"):
-                if phase != self._step_phase:
+                if phase_name != self._step_phase:
                     self._step_loss.clear()
                     self._step_nums.clear()
-                    self._step_phase = phase
+                    self._step_phase = phase_name
                 self._step_loss.append(float(loss))
                 self._step_nums.append(int(step))
         self._write_data(
             epoch, max_epoch, step, max_step,
-            epoch_metrics or {}, step_metrics, phase,
+            epoch_metrics or {}, step_metrics, phase_name,
             best_metric, best_epoch, epochs_no_improve, is_gradient_phase,
         )
+
+    def heartbeat(self) -> None:
+        """Refresh the liveness timestamp without changing the displayed data.
+
+        Cheap and idempotent — a no-op until the first :meth:`update` and after
+        :meth:`finalize`. Call it around long synchronous work (saving
+        checkpoints, plotting) that would otherwise starve the keepalive thread
+        and let the browser flag a live run as *Offline*.
+        """
+        if self.active:
+            self._heartbeat()
 
     def finalize(
         self,
@@ -367,6 +423,7 @@ class Dashboard:
         epoch_metrics: MetricTable | None = None,
         best_metric: float = float("inf"),
         best_epoch: int | None = None,
+        *,
         epochs_no_improve: int = 0,
     ) -> None:
         """Write the final JSON snapshot and embed all data inline in the HTML.
@@ -377,11 +434,11 @@ class Dashboard:
         viewable offline after the process exits.
 
         Args:
-            epoch:             Final epoch number reached.
-            max_epoch:         Total number of training epochs.
-            epoch_metrics:     All accumulated epoch metrics.
-            best_metric:       Best monitored validation value achieved.
-            best_epoch:        Epoch that achieved ``best_metric``.
+            epoch: Final epoch number reached.
+            max_epoch: Total number of training epochs.
+            epoch_metrics: All accumulated epoch metrics.
+            best_metric: Best monitored value achieved.
+            best_epoch: Epoch that achieved ``best_metric``.
             epochs_no_improve: Consecutive epochs without an improvement.
         """
         self._keepalive_stop.set()
@@ -395,8 +452,34 @@ class Dashboard:
         self._embed_data_in_html()
 
     def open_browser(self) -> None:
-        """Open the HTML shell in the system's default browser."""
-        self._open_browser()
+        """Open the dashboard, preferring the machine you are working *from*.
+
+        Honours ``$BROWSER`` first. Editors set it when you develop on a remote
+        host — VS Code Remote-SSH / Dev Containers / WSL, JetBrains Gateway —
+        pointing it at a helper that opens the URL on your **local** machine and
+        forwards the port, so the dashboard appears where you are sitting rather
+        than on the headless remote. Falls back to the platform default browser,
+        then to a quiet no-op: over a plain SSH session there is no display, so
+        forward the printed port and open the URL manually
+        (``ssh -L 8080:127.0.0.1:<printed-port> user@host``).
+        """
+        url = self.url
+        # A plain helper/command path (the editor case) — run it with the URL
+        # directly, which is reliable across platforms; anything fancier
+        # (inline args, ``%s``) is left to webbrowser below.
+        entry = os.environ.get("BROWSER", "").split(os.pathsep)[0].strip()
+        if entry and "%s" not in entry:
+            try:
+                import subprocess
+                subprocess.Popen([entry, url])
+                return
+            except Exception:
+                pass
+        try:
+            import webbrowser
+            webbrowser.open(url)
+        except Exception:
+            pass
 
     # ── Internals ─────────────────────────────────────────────────────────────
 
@@ -408,7 +491,7 @@ class Dashboard:
         max_step: int,
         epoch_metrics: MetricTable,
         step_metrics: dict[str, float] | None,
-        phase: str,
+        phase_name: str,
         best_metric: float,
         best_epoch: int | None,
         epochs_no_improve: int = 0,
@@ -421,14 +504,13 @@ class Dashboard:
             "max_epoch":          max_epoch,
             "current_step":       step,
             "max_step":           max_step,
-            "train_steps":        self._train_steps,
-            "val_steps":          self._val_steps,
             "epoch_metrics":      epoch_metrics,
             "last_step_metrics":  step_metrics,
-            "last_phase":         phase,
-            "training_phases":    self._training_phases,
+            "last_phase":         phase_name,
+            "phases":             [asdict(p) for p in self._phases],
             "is_gradient_phase":  is_gradient_phase,
             "monitor":            self._monitor,
+            "monitor_phase":      self._monitor_phase,
             # ``best_epoch is None`` is the single source of truth for "no best
             # yet" — this avoids depending on the ±inf sentinel, which differs
             # between min- and max-mode monitoring.
@@ -449,23 +531,17 @@ class Dashboard:
             "started_at":         self._started_at.strftime("%Y-%m-%d %H:%M:%S") if self._started_at else None,
             "elapsed":            str(el).split(".")[0] if el else None,
             "updated_at":         datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            # The poll interval is not repeated here: the browser reads it from the
+            # shell's ``poll-ms`` meta tag, which is the one place it is declared.
             "last_update_ms":     int(time.time() * 1000),
-            "poll_interval_ms":   self._config.poll_interval_ms,
         }
+        # Sanitized once, at the single point the payload is serialized — so the cached
+        # copy the heartbeat re-publishes is safe too, and holds a snapshot of the metric
+        # tables rather than aliasing the trainer's live ones.
+        safe = _json_safe(data)
         with self._data_lock:
-            self._last_payload = data
-            self._atomic_write(self._data_path, json.dumps(data))
-
-    def heartbeat(self) -> None:
-        """Refresh the liveness timestamp without changing the displayed data.
-
-        Cheap and idempotent — a no-op until the first :meth:`update` and after
-        :meth:`finalize`. Call it around long synchronous work (saving
-        checkpoints, plotting) that would otherwise starve the keepalive thread
-        and let the browser flag a live run as *Offline*.
-        """
-        if self.active:
-            self._heartbeat()
+            self._last_payload = safe
+            self._atomic_write(self._data_path, json.dumps(safe))
 
     def _heartbeat(self) -> None:
         """Rewrite the cached payload with a fresh ``last_update_ms``."""
@@ -508,7 +584,7 @@ class Dashboard:
         for _ in range(10):
             try:
                 tmp.write_text(text, encoding="utf-8")
-                os.replace(tmp, path)
+                tmp.replace(path)   # atomic rename — readers never see a half-written file
                 return
             except PermissionError:
                 time.sleep(0.05)
@@ -516,36 +592,6 @@ class Dashboard:
                 break
         with contextlib.suppress(OSError):
             tmp.unlink(missing_ok=True)
-
-    def _open_browser(self) -> None:
-        """Open the dashboard, preferring the machine you are working *from*.
-
-        Honors ``$BROWSER`` first. Editors set it when you develop on a remote
-        host — VS Code Remote-SSH / Dev Containers / WSL, JetBrains Gateway —
-        pointing it at a helper that opens the URL on your **local** machine and
-        forwards the port, so the dashboard appears where you are sitting rather
-        than on the headless remote. Falls back to the platform default browser,
-        then to a quiet no-op: over a plain SSH session there is no display, so
-        forward the printed port and open the URL manually
-        (``ssh -L 8080:127.0.0.1:<printed-port> user@host``).
-        """
-        url = self.url
-        # A plain helper/command path (the editor case) — run it with the URL
-        # directly, which is reliable across platforms; anything fancier
-        # (inline args, ``%s``) is left to webbrowser below.
-        entry = os.environ.get("BROWSER", "").split(os.pathsep)[0].strip()
-        if entry and "%s" not in entry:
-            try:
-                import subprocess
-                subprocess.Popen([entry, url])
-                return
-            except Exception:
-                pass
-        try:
-            import webbrowser
-            webbrowser.open(url)
-        except Exception:
-            pass
 
     def _start_http_server(self) -> None:
         """Start a daemon-thread HTTP server in run_dir so the browser can fetch() the JSON."""
@@ -574,10 +620,8 @@ class Dashboard:
         thread, so ``stale_after_ms`` absorbs such pauses and the trainer also
         pulses :meth:`heartbeat` directly around them.
         """
-        interval = self._config.poll_interval_ms / 1000
-
         def _run() -> None:
-            while not self._keepalive_stop.wait(interval):
+            while not self._keepalive_stop.wait(self.poll_s):
                 self._heartbeat()
 
         threading.Thread(target=_run, daemon=True).start()
@@ -608,7 +652,7 @@ _CSS = r"""
   --good:      #268beb;
   --bad:       #f2596b;
   --st-training:   #268beb;
-  --st-validating: #a668d6;  /* the val ink lightened — badge text stays legible on night panels */
+  --st-evaluating: #a668d6;  /* the val ink lightened — badge text stays legible on night panels */
   --st-stagnant:   #268beb;  /* plateau keeps the training blue — gold ★ already tells the story */
   --st-completed:  #e2bd6e;
   --st-idle:       #8a90a0;
@@ -641,7 +685,7 @@ _CSS = r"""
   --good:      #0f61c3;
   --bad:       #c73949;
   --st-training:   #0f61c3;
-  --st-validating: #762288;
+  --st-evaluating: #762288;
   --st-stagnant:   #0f61c3;
   --st-completed:  #96721b;
   --st-idle:       #6e7480;
@@ -809,9 +853,9 @@ body::before {
 .hm-phase.is-train { color: var(--st-training);
   background: color-mix(in srgb, var(--st-training) 10%, transparent);
   border: 1px solid color-mix(in srgb, var(--st-training) 26%, transparent); }
-.hm-phase.is-eval { color: var(--st-validating);
-  background: color-mix(in srgb, var(--st-validating) 10%, transparent);
-  border: 1px solid color-mix(in srgb, var(--st-validating) 26%, transparent); }
+.hm-phase.is-eval { color: var(--st-evaluating);
+  background: color-mix(in srgb, var(--st-evaluating) 10%, transparent);
+  border: 1px solid color-mix(in srgb, var(--st-evaluating) 26%, transparent); }
 
 /* ── KPI cells — a uniform grid; engraved capitals label ink numerals ── */
 .kpi { min-width: 0; max-width: 100%; overflow: hidden; }   /* a long value clips, never overlaps a neighbour */
@@ -1139,7 +1183,8 @@ document.addEventListener('DOMContentLoaded', function () {
   function fmtDur(s) { if (!isFinite(s) || s < 0) return '—'; s = Math.round(s);
     const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), x = s % 60;
     if (h) return h + ':' + String(m).padStart(2, '0') + ':' + String(x).padStart(2, '0'); return m + ':' + String(x).padStart(2, '0'); }
-  function fmtClock(d) { return String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0'); }
+  /* `d` is the payload everywhere in this script — a clock takes a Date, so it is `dt`. */
+  function fmtClock(dt) { return String(dt.getHours()).padStart(2, '0') + ':' + String(dt.getMinutes()).padStart(2, '0'); }
 
   /* ── theme ─────────────────────────────────────────────── */
   let themeEpoch = 0;
@@ -1150,17 +1195,34 @@ document.addEventListener('DOMContentLoaded', function () {
       line: v('--line'), grid1: v('--grid-1'), grid2: v('--grid-2'), gold: v('--gold'),
       pal: [v('--c1'), v('--c2'), v('--c3'), v('--c4'), v('--c5'), v('--c6'), v('--c7'), v('--c8')] };
   }
-  /* phase-fixed colours from the spectrum — train is always blue, val /
-     eval purple, test pink; anything else takes the next free hue. Curves
-     therefore always agree with the phase badge and the state accents. */
-  function phasePal(C, names) {
-    let next = 1;
-    return names.map((nm) => {
-      let i = /^train/i.test(nm) ? 0 : /^(val|dev|eval)/i.test(nm) ? 3 : /^test/i.test(nm) ? 6 : -1;
-      if (i < 0) { i = next % C.pal.length; next += 2; }
-      return C.pal[i];
-    });
+  /* ── phase inks ────────────────────────────────────────────
+     Each phase claims one slot of the spectrum, once, and keeps it for the life
+     of the page — so a phase wears the same ink in every chart, legend, badge
+     and ring, whichever subset of phases a given chart happens to show. Slots
+     are claimed in two passes over the run's declared phase order: the semantic
+     anchors first (train blue, val / eval violet, test magenta), then everything
+     else takes the lowest free slot. A phase the run never declared (a bare
+     execute_phase, a later test()) claims its slot the first time it is drawn. */
+  const ink = { slot: {}, used: new Set(), seeded: false };
+  function anchorSlot(nm) { return /^train/i.test(nm) ? 0 : /^(val|dev|eval)/i.test(nm) ? 3 : /^test/i.test(nm) ? 6 : -1; }
+  function claim(nm, i) { ink.used.add(i); ink.slot[nm] = i; return i; }
+  function inkSlot(nm) {
+    if (nm in ink.slot) return ink.slot[nm];
+    const a = anchorSlot(nm);
+    if (a >= 0 && !ink.used.has(a)) return claim(nm, a);
+    for (let i = 0; i < 8; i++) if (!ink.used.has(i)) return claim(nm, i);
+    return claim(nm, Object.keys(ink.slot).length % 8);          /* > 8 phases — wrap */
   }
+  function seedInks(phases) {
+    if (ink.seeded || !phases || !phases.length) return;
+    ink.seeded = true;
+    /* anchors first, so a phase that merely *starts* with "train" (train_eval)
+       cannot take the blue out from under the training phase itself */
+    phases.forEach((p) => { const a = anchorSlot(p.name);
+      if (a >= 0 && !ink.used.has(a) && !(p.name in ink.slot)) claim(p.name, a); });
+    phases.forEach((p) => inkSlot(p.name));
+  }
+  function phasePal(C, names) { return names.map((nm) => C.pal[inkSlot(nm)]); }
   function accentColor() { return getComputedStyle(document.documentElement).getPropertyValue('--accent').trim(); }
   function applyTheme(t) {
     document.documentElement.dataset.theme = t;
@@ -1191,13 +1253,15 @@ document.addEventListener('DOMContentLoaded', function () {
     favLink.href = c.toDataURL('image/png');
   } catch (e) {} }
 
-  const MODE_LABEL = { training: 'Training', validating: 'Validating', stagnant: 'Plateau',
+  /* The pill reports the run's state, not which phase is up — the phase badge
+     beside the gauge already names that. Any non-gradient phase reads Evaluating. */
+  const MODE_LABEL = { training: 'Training', evaluating: 'Evaluating', stagnant: 'Plateau',
     completed: 'Completed', idle: 'Standby', stopped: 'Offline' };
   let curMode = '';
   function setMode(mode, ni) {
     const pill = el('status');
-    pill.classList.toggle('live', mode === 'training' || mode === 'validating');
-    pill.title = mode === 'stagnant' ? 'No validation improvement for ' + ni + ' epoch' + (ni === 1 ? '' : 's') : '';
+    pill.classList.toggle('live', mode === 'training' || mode === 'evaluating');
+    pill.title = mode === 'stagnant' ? 'No improvement for ' + ni + ' epoch' + (ni === 1 ? '' : 's') : '';
     setText('status-text', MODE_LABEL[mode] || mode);
     if (mode === curMode) return;
     curMode = mode;
@@ -1275,37 +1339,70 @@ document.addEventListener('DOMContentLoaded', function () {
     c.querySelectorAll('.kv-row').forEach(attachCopy);
   }
 
-  /* ── throughput · ETA ──────────────────────────────────── */
-  const spd = { ema: 0, lastStep: -1, lastT: 0 };
+  /* ── throughput · ETA ──────────────────────────────────────
+     Both are measured on gradient steps alone, so they mean the same thing
+     whatever else the epoch contains: it/s is the training rate, and the ETA
+     counts down the run's remaining training steps. Evaluation phases hold both
+     readings rather than diluting them with their own (faster, unrepresentative)
+     steps — which is why the training phase's step budget is remembered here
+     instead of read from the live phase's max_step. */
+  const spd = { ema: 0, lastStep: -1, lastT: 0, gradMax: 0 };
   function updateSpeed(d, grad) { if (d.status !== 'training' || !grad || !d.max_step) return;
+    spd.gradMax = d.max_step;
     const g = (Math.max(d.current_epoch, 1) - 1) * d.max_step + (d.current_step || 0), now = performance.now();
     if (spd.lastStep >= 0 && g > spd.lastStep && spd.lastT) { const dt = (now - spd.lastT) / 1000; if (dt > 0.05) { const r = (g - spd.lastStep) / dt; spd.ema = spd.ema ? lerp(spd.ema, r, 0.3) : r; } }
     spd.lastStep = g; spd.lastT = now; }
-  function etaSeconds(d) { if (!spd.ema || !d.max_step || !d.max_epoch) return NaN;
-    const total = d.max_epoch * d.max_step, done = (Math.max(d.current_epoch, 1) - 1) * d.max_step + (d.current_step || 0); return Math.max(total - done, 0) / spd.ema; }
+  function etaSeconds(d) { if (!spd.ema || !spd.gradMax || !d.max_epoch || spd.lastStep < 0) return NaN;
+    return Math.max(d.max_epoch * spd.gradMax - spd.lastStep, 0) / spd.ema; }
+
+  /* ── the epoch's phase schedule ────────────────────────────
+     d.phases is the run's declared schedule, in order. Everything the gauge and
+     the badges need is read from it — no phase name is special-cased. */
+  let primaryPhase = 'train';   /* the run's first gradient phase — the series a chart leads with */
+  function activePhases(d) {     /* the phases that actually run in this epoch */
+    const e = d.current_epoch || 0;
+    return (d.phases || []).filter((p) => e > 0 && e % (p.every || 1) === 0);
+  }
+  function phaseOf(d, name) { return (d.phases || []).find((p) => p.name === name) || null; }
+  function isTrainingPhase(d, name) { const p = phaseOf(d, name); return p ? !!p.training : /^train$/i.test(name); }
 
   /* ── metric helpers ────────────────────────────────────── */
-  function primarySeries(phases) { if (!phases) return null; if (phases.train && phases.train.length) return { phase: 'train', vals: phases.train };
-    for (const k of Object.keys(phases)) if (phases[k] && phases[k].length) return { phase: k, vals: phases[k] }; return null; }
+  /* a metric's epoch history for the primary phase, else the first phase that has one */
+  function primaryValues(phases) { if (!phases) return null;
+    if (phases[primaryPhase] && phases[primaryPhase].length) return phases[primaryPhase];
+    for (const k of Object.keys(phases)) if (phases[k] && phases[k].length) return phases[k]; return null; }
   function metricNames(d) { return Array.from(new Set(Object.keys(d.epoch_metrics || {}).concat(Object.keys(d.last_step_metrics || {})))); }
   function pickPrimary(d) { const names = metricNames(d); return names.find((n) => /loss/i.test(n)) || names[0] || null; }
-  function liveValue(d, m) { const sm = d.last_step_metrics || {}, ps = primarySeries((d.epoch_metrics || {})[m]); return (typeof sm[m] === 'number') ? sm[m] : (ps ? ps.vals[ps.vals.length - 1] : undefined); }
+  function liveValue(d, m) { const sm = d.last_step_metrics || {}, vals = primaryValues((d.epoch_metrics || {})[m]);
+    return (typeof sm[m] === 'number') ? sm[m] : (vals ? vals[vals.length - 1] : undefined); }
 
   /* ── progress model — strictly monotonic ───────────────────
-     The overall run percentage and the progress bar advance through
-     every training AND validation step, proportionally to each phase's
-     step count, and never rewind. Updates that carry no active phase
-     (the inter-phase metric flushes) return null so the caller holds the
-     last value instead of dropping to zero. */
+     The overall run percentage and the progress bar advance through EVERY phase
+     of the epoch — training or not — each phase owning the slice of the epoch
+     that its step count is worth, and never rewind.
+
+     phaseBounds gives a phase its [start, end] slice of the epoch: the prefix of
+     step counts before it over the epoch's total. When any phase's length is
+     unknown (a length-less IterableDataset) no step count can be trusted, so the
+     epoch is split evenly by phase count instead — coarser, still monotonic.
+     Updates that carry no active phase (the inter-phase metric flushes) return
+     null, so the caller holds the last value rather than dropping to zero. */
+  function phaseBounds(d, name) {
+    const act = activePhases(d), i = act.findIndex((p) => p.name === name);
+    if (i < 0) return null;                                        /* phase outside the schedule */
+    const sized = act.every((p) => (p.steps || 0) > 0);
+    const total = sized ? act.reduce((s, p) => s + p.steps, 0) : act.length;
+    if (total <= 0) return null;
+    const before = sized ? act.slice(0, i).reduce((s, p) => s + p.steps, 0) : i;
+    const own = sized ? act[i].steps : 1;
+    return [before / total, (before + own) / total];
+  }
   function epochFraction(d) {
-    const cs = d.current_step || 0, ms = d.max_step || 0, grad = !!d.is_gradient_phase;
+    const cs = d.current_step || 0, ms = d.max_step || 0;
     if (!d.last_phase || ms <= 0 || cs <= 0) return null;          /* idle / flush — hold previous */
-    const TS = d.train_steps || 0, VS = d.val_steps || 0, total = TS + VS;
-    if (TS > 0) {                                                  /* proportional global-step model */
-      const done = grad ? cs : TS + cs;
-      return clamp(done / total, 0, 1);
-    }
-    return grad ? clamp(cs / ms, 0, 1) : 1;                        /* sizes unknown — best effort */
+    const b = phaseBounds(d, d.last_phase);
+    if (!b) return clamp(cs / ms, 0, 1);                           /* no schedule — the phase is the epoch */
+    return clamp(b[0] + (b[1] - b[0]) * (cs / ms), 0, 1);
   }
   const prog = { epFrac: 0, stepFrac: 0, phaseCol: 'var(--st-idle)', ran: false,
                  lastGrad: false, lastPhase: '', lastMax: 0 };
@@ -1370,7 +1467,7 @@ document.addEventListener('DOMContentLoaded', function () {
       setText('k-primary-label', primary ? titleCase(primary) : 'Metric');
       tween(el('k-primary'), undefined); setText('k-primary-sub', '—');
     }
-    setText('k-best-label', 'Best Val ' + titleCase(d.monitor || 'loss'));
+    setText('k-best-label', 'Best ' + titleCase(d.monitor_phase || 'val') + ' ' + titleCase(d.monitor || 'loss'));
     if (d.best_metric != null) {
       el('k-best-star').style.display = '';
       tween(el('k-best'), d.best_metric, fmt);
@@ -1401,8 +1498,8 @@ document.addEventListener('DOMContentLoaded', function () {
   function fmtGB(g) { return g >= 100 ? g.toFixed(0) : g.toFixed(g >= 10 ? 1 : 2); }
   function isStepping(d) { return !!(d.last_phase && d.max_step && d.current_step) && d.status === 'training'; }
 
-  function sparkSVG(vals, W, H, phase, cap) {
-    const C = themeColors(), col = phasePal(C, [phase || 'train'])[0];   /* phase ink — echoes that phase's curve below */
+  function sparkSVG(vals, W, H, phaseName, cap) {
+    const C = themeColors(), col = phasePal(C, [phaseName || 'train'])[0];   /* phase ink — echoes that phase's curve below */
     const PADX = 3, PADT = 10, PADB = 8, n = vals.length;
     let mn = Infinity, mx = -Infinity;
     for (const v of vals) { if (v < mn) mn = v; if (v > mx) mx = v; }
@@ -1454,7 +1551,7 @@ document.addEventListener('DOMContentLoaded', function () {
     const phEl = el('sg-phase');
     if (phEl) {
       if (stepping && ph) { phEl.style.display = ''; phEl.textContent = titleCase(ph);
-        phEl.className = 'hm-phase ' + (/^train/i.test(ph) ? 'is-train' : 'is-eval'); }
+        phEl.className = 'hm-phase ' + (isTrainingPhase(d, ph) ? 'is-train' : 'is-eval'); }
       else phEl.style.display = 'none';
     }
     const W = Math.max(80, Math.round(body.clientWidth || 240));
@@ -1464,7 +1561,9 @@ document.addEventListener('DOMContentLoaded', function () {
     sparkSig = sig;
     if (!vals.length) { body.innerHTML = '<div class="spark-empty">' + (stepping ? 'awaiting steps…' : '—') + '</div>'; return; }
     const H = Math.max(40, Math.round(body.clientHeight || 120));
-    body.innerHTML = sparkSVG(vals, W, H, ph, d.step_loss_cap || 96);
+    /* the window length is the payload's own step_loss_cap — sparkSVG falls back
+       to the sample count if it is ever absent, so no constant is duplicated here */
+    body.innerHTML = sparkSVG(vals, W, H, ph, d.step_loss_cap);
   }
 
   /* Learning rate and GPU memory are standing telemetry — like the best-metric
@@ -1787,10 +1886,14 @@ document.addEventListener('DOMContentLoaded', function () {
     if (!d) return;
     if (d.status === 'training' && Date.now() - (d.last_update_ms || 0) > STALE_MS) d.status = 'stopped';
 
+    seedInks(d.phases);
+    const firstGrad = (d.phases || []).find((p) => p.training);
+    primaryPhase = firstGrad ? firstGrad.name : ((d.phases || [])[0] || {}).name || 'train';
+
     const grad = !!d.is_gradient_phase, ni = d.epochs_no_improve || 0, done = d.status === 'completed';
     const active = !!(d.last_phase && d.max_step && d.current_step);
     const mode = done ? 'completed' : d.status === 'stopped' ? 'stopped'
-      : !active ? 'idle' : grad ? (ni >= 1 ? 'stagnant' : 'training') : 'validating';
+      : !active ? 'idle' : grad ? (ni >= 1 ? 'stagnant' : 'training') : 'evaluating';
     setMode(mode, ni);
     setText('m-start', d.started_at || '—'); setText('m-elapsed', d.elapsed || '—');
 
@@ -1799,11 +1902,10 @@ document.addEventListener('DOMContentLoaded', function () {
        info, and polling rarely catches the exact final step, so without the snap
        both the inner ring and the % would stall just short of the boundary.
          · inner ring (current-phase steps): snaps to a full circle.
-         · epoch fraction (overall % + bar): snaps to train_steps/total after the
-           training phase (validation still pending) or to 1 after validation /
-           when there is no validation — so it reliably reaches 100 % at the end. */
+         · epoch fraction (overall % + bar): snaps to the finished phase's upper
+           bound — the next phase's start, or 1 for the epoch's last phase — so it
+           reliably reaches 100 % at the end whatever the schedule. */
     const ef = epochFraction(d);
-    const TS = d.train_steps || 0, VS = d.val_steps || 0, total = TS + VS;
     if (done) { prog.epFrac = 1; prog.stepFrac = 1; }
     else if (active) {
       prog.epFrac = ef;                                    // non-null whenever active
@@ -1811,7 +1913,8 @@ document.addEventListener('DOMContentLoaded', function () {
       prog.lastGrad = grad; prog.lastPhase = d.last_phase; prog.lastMax = d.max_step; prog.ran = true;
     } else if (prog.ran) {                                 // a phase just finished
       prog.stepFrac = 1;
-      prog.epFrac = (prog.lastGrad && VS > 0 && total > 0) ? clamp(TS / total, 0, 1) : 1;
+      const b = phaseBounds(d, prog.lastPhase);
+      prog.epFrac = b ? b[1] : 1;
     }
     const E = d.max_epoch || 0, completed = Math.max(d.current_epoch || 0, 1) - 1;
     const overall = done ? 1 : (E ? clamp((completed + prog.epFrac) / E, 0, 1) : 0);
@@ -1822,7 +1925,7 @@ document.addEventListener('DOMContentLoaded', function () {
        completion — and at standby (before any epoch) it is a neutral grey. On run
        completion the inner ring is blanked entirely; the gold crown moves to the
        outer run ring instead. */
-    if (active) prog.phaseCol = grad ? 'var(--st-training)' : 'var(--st-validating)';
+    if (active) prog.phaseCol = grad ? 'var(--st-training)' : 'var(--st-evaluating)';
     else if (prog.ran) prog.phaseCol = 'var(--st-completed)';   /* steps done, between phases → gold */
     else prog.phaseCol = 'var(--st-idle)';
     document.documentElement.style.setProperty('--phasecol', prog.phaseCol);

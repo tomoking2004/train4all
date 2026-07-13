@@ -1,12 +1,7 @@
 import abc
-import contextlib
-import gc
-import importlib.metadata
 import inspect
 import json
 import math
-import multiprocessing
-import platform
 import random
 import shutil
 import subprocess
@@ -15,10 +10,10 @@ from collections.abc import Callable, Iterator
 from datetime import datetime
 from functools import wraps
 from pathlib import Path
+from types import MappingProxyType
 from typing import Any, Self
 
 import numpy as np
-import psutil
 import torch
 import torch.nn as nn
 from torch.optim import Optimizer
@@ -27,16 +22,24 @@ from torch.utils.data import DataLoader
 from tqdm import tqdm
 
 from train4all.trainer.checkpoint import Checkpoint
+from train4all.trainer.phase import Phase
 from train4all.utils import (
+    DEFAULT_KEY_WIDTH,
     Dashboard,
     DashboardConfig,
+    GpuProbe,
     LogLevel,
     MetricTable,
+    PhaseSpec,
     TrainerLogger,
     UnifiedLogger,
     copy_dir,
+    cuda_index,
+    empty_cuda_cache,
+    env_summary,
     get_metric_plot_filename,
     get_metric_plot_title,
+    gpu_temperature,
     print_dict_tree,
     remove_dir,
     replace_dict_keys,
@@ -72,6 +75,15 @@ class BaseTrainer(abc.ABC):
     metrics during the final evaluation, or ``get_batch_weight()`` to change how
     per-step metrics are weighted when averaged over an epoch.
 
+    An epoch is whatever sequence of :class:`~train4all.trainer.phase.Phase`
+    objects you hand to :meth:`train` — the loop has no built-in notion of
+    "train" or "val" beyond the names you give them::
+
+        trainer.train(
+            Phase("train", train_loader, training=True),
+            Phase("val", val_loader),
+        )
+
     Args:
         num_epochs: Total number of training epochs. Required by ``train()``;
             leave unset (``None``) to only evaluate (``test()``) or inspect checkpoints.
@@ -101,12 +113,14 @@ class BaseTrainer(abc.ABC):
             when you are. ``True``/``False`` force it on/off. CUDA-only; a no-op
             on CPU/MPS. Independent of and complementary to ``amp``.
         patience: Early-stopping patience (epochs without improvement). Disabled if ``None``.
-        monitor: Validation metric name that drives best-checkpoint selection and
-            early stopping. Defaults to ``"loss"``. The value is read from the
-            validation phase metrics each epoch.
+        monitor: Metric name that drives best-checkpoint selection and early
+            stopping. Defaults to ``"loss"``. Read each epoch from the phase named
+            by ``monitor_phase``.
         monitor_mode: ``"min"`` to treat lower ``monitor`` values as better
             (e.g. loss) or ``"max"`` for higher-is-better metrics (e.g. accuracy, F1).
-        training_phases: Phase names treated as training phases. Defaults to ``["train"]``.
+        monitor_phase: Name of the phase the ``monitor`` metric is read from.
+            Defaults to ``"val"`` — but it is just a name, so any phase in the
+            schedule can drive selection and early stopping.
         device: Device string (e.g. ``"cuda"``, ``"cuda:1"``, ``"mps"``, ``"cpu"``).
             Auto-detected when ``None`` — prefers CUDA, then MPS, then CPU.
             On a multi-GPU machine, select a specific GPU with ``"cuda:<index>"``.
@@ -116,7 +130,9 @@ class BaseTrainer(abc.ABC):
             Snapshotting is disabled when ``None``.
         resume: Resume from the latest checkpoint at the start of training.
         save_interval: Save a periodic checkpoint every *N* epochs.
-        record_step_metrics: Record per-step metrics during training phases.
+        record_step_metrics: Record per-step metrics. The master switch; each
+            phase decides whether it takes part (see ``Phase.record_steps``,
+            which defaults to the training phases).
         step_metric_names: Step metric names to record. ``None`` records all.
         pbar_metric_names: Metric names shown in the tqdm postfix. ``None`` hides all
             metrics; GPU memory is always shown on CUDA regardless.
@@ -150,10 +166,10 @@ class BaseTrainer(abc.ABC):
     _METRICS_EPOCH: str = "epoch_metrics"
     _METRICS_STEP: str  = "step_metrics"
 
-    # ── Phase that carries the final-evaluation responsibility ────────────────
-    # The single phase whose per-step metrics come from ``compute_test_metrics``
-    # instead of ``compute_metrics``. Final evaluation runs once, so it owns the
-    # report and can compute heavier, report-only metrics.
+    # ── Name of the phase ``test()`` builds ───────────────────────────────────
+    # Only a name — the phase's behaviour (no gradients, ``compute_test_metrics``)
+    # travels in the :class:`Phase` that ``test()`` constructs, not in a lookup
+    # keyed off this string.
     _TEST_PHASE: str = "test"
 
     # ── GPU probe tunables ────────────────────────────────────────────────────
@@ -161,7 +177,10 @@ class BaseTrainer(abc.ABC):
     _GPU_MEM_TTL_S: float = 2.0  # cache nvidia-smi memory reads for this long
 
     # ── Console / display tunables ────────────────────────────────────────────
-    _KEY_WIDTH: int           = 32     # column width for printed metric / summary tables
+    # The width itself is owned by ``log_utils`` (see ``DEFAULT_KEY_WIDTH``), so a
+    # trainer's tables and a standalone ``Checkpoint.print_summary()`` agree by
+    # reference, not by coincidence.
+    _KEY_WIDTH: int           = DEFAULT_KEY_WIDTH
     _KEEP_PROGRESS_BAR: bool  = False  # persist tqdm bars after an epoch completes
     _DASH_THROTTLE_S: float   = 0.5    # minimum seconds between dashboard step writes
     _DASH_EXTRA_WAIT_S: float = 0.5    # extra wait after dashboard finalize
@@ -179,7 +198,7 @@ class BaseTrainer(abc.ABC):
         patience: int | None = None,
         monitor: str = "loss",
         monitor_mode: str = "min",
-        training_phases: list[str] | None = None,
+        monitor_phase: str = "val",
         device: str | None = None,
         seed: int | None = None,
         run_dir: Path | str = "run",
@@ -200,15 +219,15 @@ class BaseTrainer(abc.ABC):
         self.batch_size = batch_size
         self.learning_rate = learning_rate
         self.max_grad_norm = max_grad_norm
-        self.accumulation_steps = max(1, accumulation_steps)
+        self.accumulation_steps = self._validate_accumulation_steps(accumulation_steps)
         self.amp = amp
         self.tf32 = tf32
 
-        # ── Early stopping / phases ───────────────────────────────────────────
+        # ── Early stopping / monitoring ───────────────────────────────────────
         self.patience = patience
         self.monitor = monitor
-        self.monitor_mode = self._validate_mode(monitor_mode)
-        self.training_phases = training_phases or ["train"]
+        self.monitor_mode = self._validate_monitor_mode(monitor_mode)
+        self.monitor_phase = monitor_phase
 
         # ── Device / reproducibility ──────────────────────────────────────────
         self.device = torch.device(device or (
@@ -270,22 +289,18 @@ class BaseTrainer(abc.ABC):
         self._ckpt_extras: dict[str, Any] = {}
         self._last_dash_write: float = 0.0
 
-        # ── Internal: GPU-memory probe state ──────────────────────────────────
-        # Initialized lazily and reused across steps so the progress bar never
-        # pays an NVML init/shutdown per iteration.
-        self._pynvml: Any = None
-        self._nvml_handle: Any = None
-        self._nvml_failed: bool = False
-        self._gpu_mem_cache: tuple[int, int, int] = (0, 0, 0)
-        self._gpu_mem_cache_t: float = 0.0
+        # ── Internal: GPU-memory probe ────────────────────────────────────────
+        # The probe owns its own NVML handle and smi cache, so the progress bar
+        # never pays an init/shutdown per iteration (see ``utils.system``).
+        self._gpu = GpuProbe(self._cuda_index, ttl_s=self._GPU_MEM_TTL_S)
 
-        # ── Internal: AMP / TF32 state (depends on the attributes set above) ──
-        # Each resolved from self.amp / self.tf32 and assigned exactly once here.
-        # _init_tf32 runs after reset_seed, whose cuDNN determinism flags it may
-        # relax.
+        # ── Internal: AMP / TF32 (depends on the attributes set above) ────────
+        # AMP resolves to state the step loop reads on every batch; TF32 resolves
+        # to global torch flags, so it keeps nothing. _init_tf32 runs after
+        # reset_seed, whose cuDNN determinism flags it may relax.
         self._amp_enabled, self._amp_dtype, self._scaler = self._init_amp()
         self.reset_seed()  # applies self.seed to the RNGs when set
-        self._tf32_enabled = self._init_tf32()
+        self._init_tf32()
 
         # Reproducibility config — only the arguments the caller actually
         # customized (anything left at its default is omitted), so the saved
@@ -301,7 +316,7 @@ class BaseTrainer(abc.ABC):
             "patience": patience,
             "monitor": monitor,
             "monitor_mode": monitor_mode,
-            "training_phases": training_phases,
+            "monitor_phase": monitor_phase,
             "seed": seed,
         })
         # Record the *resolved* device unconditionally (not via the filter
@@ -313,8 +328,7 @@ class BaseTrainer(abc.ABC):
 
         dashboard_config = dashboard_config or DashboardConfig()
         self._dashboard: Dashboard | None = (
-            Dashboard(dashboard_config, self.run_dir)
-            if use_dashboard and dashboard_config.enabled else None
+            Dashboard(dashboard_config, self.run_dir) if use_dashboard else None
         )
         # Tracked even when the dashboard is disabled, so a fresh run can delete a
         # previous run's dashboard files (see ``clear_artifacts``).
@@ -390,15 +404,16 @@ class BaseTrainer(abc.ABC):
         """
         Compute evaluation metrics for the final test phase.
 
-        Train and validation share one cheap, per-epoch metric path
-        (``compute_metrics``); the test phase runs once for final reporting, so
-        it gets its own override here for heavier, report-only metrics (AUC,
-        per-class F1, calibration, confusion matrices, …). The default simply
-        delegates to ``compute_metrics``, so test mirrors validation until you
-        override it.
+        The metric function :meth:`test` gives the phase it builds. Final
+        evaluation runs once, so it can afford heavier, report-only metrics (AUC,
+        per-class F1, calibration, confusion matrices, …) that would be wasteful
+        every epoch. The default delegates to ``compute_metrics``, so test
+        mirrors validation until you override it.
 
-        Only the ``"test"`` phase routes here (see ``_TEST_PHASE``); every other
-        phase — train, val, and any custom phase — uses ``compute_metrics``.
+        Nothing routes here by phase name — this is simply the default a
+        ``Phase`` can be given. Any phase can carry its own metric function::
+
+            Phase("audit", audit_loader, metric_fn=self.compute_test_metrics)
 
         Args:
             batch: A batch of test data.
@@ -540,79 +555,97 @@ class BaseTrainer(abc.ABC):
             epoch: Current epoch number (1-based).
         """
 
-    def on_epoch_start(self, epoch: int | None, loader: DataLoader, phase: str) -> None:
+    def on_phase_start(self, epoch: int | None, phase: Phase) -> None:
         """
-        Called at the start of every epoch, for both training and evaluation phases.
+        Called at the start of every phase, training or evaluation.
 
-        The step cache has been cleared before this hook fires.
+        The step cache has been cleared before this hook fires. The phase carries
+        its own context — ``phase.name``, ``phase.loader``, ``phase.training`` —
+        so a hook can branch on what the pass actually is rather than on its name.
 
         Args:
             epoch: Current epoch number, or ``None`` when called outside the training loop.
-            loader: The DataLoader for this epoch.
-            phase: Phase name (e.g. ``"train"``, ``"val"``, ``"test"``).
+            phase: The phase about to run.
         """
 
-    def on_epoch_end(
-        self, epoch: int | None, loader: DataLoader, metrics: dict[str, float], phase: str,
+    def on_phase_end(
+        self, epoch: int | None, phase: Phase, metrics: dict[str, float],
     ) -> None:
         """
-        Called at the end of every epoch, for both training and evaluation phases.
+        Called at the end of every phase, training or evaluation.
 
         Epoch metrics for the completed phase are already recorded and accessible
         via :meth:`get_epoch_metrics` when this hook fires.
 
         Args:
             epoch: Current epoch number, or ``None`` when called outside the training loop.
-            loader: The DataLoader for this epoch.
-            metrics: Aggregated metrics computed during the epoch.
-            phase: Phase name (e.g. ``"train"``, ``"val"``, ``"test"``).
+            phase: The phase that just ran.
+            metrics: Aggregated metrics computed during the phase.
         """
 
-    def on_step_start(self, step: int | None, batch: Any, phase: str) -> None:
+    def on_step_start(self, step: int | None, batch: Any, phase: Phase) -> None:
         """
         Called at the start of every step.
 
         Args:
-            step: 1-based step index within the current epoch, or ``None`` when called
+            step: 1-based step index within the current phase, or ``None`` when called
                 outside the standard epoch loop.
             batch: The batch about to be processed.
-            phase: Phase name (e.g. ``"train"``, ``"val"``).
+            phase: The phase this step belongs to.
         """
 
     def on_step_end(
-        self, step: int | None, batch: Any, metrics: dict[str, float], phase: str,
+        self, step: int | None, batch: Any, metrics: dict[str, float], phase: Phase,
     ) -> None:
         """
         Called at the end of every step.
 
         Args:
-            step: 1-based step index within the current epoch, or ``None`` when called
+            step: 1-based step index within the current phase, or ``None`` when called
                 outside the standard epoch loop.
             batch: The batch that was just processed.
-            metrics: Step metrics from ``compute_metrics()`` (or
-                ``compute_test_metrics()`` during the test phase), plus ``"loss"``.
-            phase: Phase name (e.g. ``"train"``, ``"val"``).
+            metrics: Step metrics from the phase's metric function, plus ``"loss"``.
+            phase: The phase this step belongs to.
         """
 
     # ── Main Training Workflow ────────────────────────────────────────────────
 
-    def train(
-        self,
-        train_loader: DataLoader,
-        val_loader: DataLoader | None = None,
-    ) -> None:
+    def train(self, *phases: Phase) -> None:
         """
         Train the model for the configured number of epochs.
 
+        Each epoch runs *phases* in the order given. The loop knows nothing about
+        "train" and "val" beyond the names you choose — the canonical run is::
+
+            trainer.train(
+                Phase("train", train_loader, training=True),
+                Phase("val", val_loader),
+            )
+
+        and a schedule that measures expensive metrics on a slice of the training
+        data, every fifth epoch, is the same expression with one more phase::
+
+            trainer.train(
+                Phase("train", train_loader, training=True, metric_fn=lambda _: {}),
+                Phase("train_eval", train_subset_loader, every=5),
+                Phase("val", val_loader),
+            )
+
+        Best-checkpoint selection and early stopping read ``monitor`` from the
+        phase named by ``monitor_phase`` (``"val"`` by default), taking only the
+        value produced *this* epoch — so a monitored phase that sits out an epoch
+        (``every > 1``) yields no value rather than a stale one.
+
         Args:
-            train_loader: DataLoader for training data.
-            val_loader: DataLoader for validation data. Required when
-                early stopping (``patience``) is enabled.
+            *phases: The phases of one epoch, in the order they run. Names must be
+                unique.
 
         Raises:
-            ValueError: If ``num_epochs`` was not set on the trainer.
+            ValueError: If ``num_epochs`` was not set, if no phase was given, or
+                if two phases share a name.
         """
         self._require_num_epochs()
+        self._validate_phases(phases)
         self.prepare_training()
 
         if self.is_training_complete():
@@ -623,15 +656,8 @@ class BaseTrainer(abc.ABC):
             self.print("\n⏹️  Early stopping condition already met. No training will run.\n")
             return
 
-        if self.patience is not None and val_loader is None:
-            self.print(
-                "Early stopping is enabled (patience set) but no val_loader was "
-                f"provided — it can never trigger without the '{self.monitor}' "
-                "metric from a validation phase.",
-                level="warn",
-            )
-
-        self._dash_init(train_loader, val_loader)
+        self.print_schedule_summary(*phases)
+        self._dash_init(phases)
 
         start_time = datetime.now()
         self.print(f"\n🚀 Training started at {start_time:%Y-%m-%d %H:%M:%S}\n")
@@ -648,21 +674,23 @@ class BaseTrainer(abc.ABC):
                 self.print(f"\n── Epoch {epoch} / {max_epoch}\n")
                 self.on_train_epoch_start(epoch)
 
-                train_metrics = self._execute_epoch(
-                    train_loader, phase="train", training=True, epoch=epoch,
-                )
-                self.print_metrics(train_metrics, phase="train")
+                # This epoch's results only. The monitor is read from here rather
+                # than from the recorded history, so a phase skipped by ``every``
+                # reports nothing instead of re-reporting its last value.
+                results: dict[str, dict[str, float]] = {}
+                for phase in phases:
+                    if not phase.runs_at(epoch):
+                        continue
+                    results[phase.name] = self._execute_phase(phase, epoch=epoch)
+                    self.print_metrics(results[phase.name], phase.name)
 
-                monitor_value: float | None = None
-                if val_loader is not None:
-                    val_metrics = self._execute_epoch(
-                        val_loader, phase="val", training=False, epoch=epoch,
-                    )
-                    self.print_metrics(val_metrics, phase="val")
-                    monitor_value = val_metrics.get(self.monitor)
-
+                monitor_value = results.get(self.monitor_phase, {}).get(self.monitor)
                 self.finalize_train_epoch(monitor_value)
                 self.save_artifacts()
+                # Mirror the run once the epoch's artifacts are on disk, so the copy
+                # is always a complete epoch. A no-op unless ``run_snapshot_dir`` is
+                # set — but when it is, this is what makes the setting mean anything.
+                self.snapshot_run()
                 self._dash_update()
                 self.on_train_epoch_end(epoch)
 
@@ -709,44 +737,48 @@ class BaseTrainer(abc.ABC):
             self.load_best_weights()
 
         self.print("\n── Test Epoch\n")
-        metrics = self._execute_epoch(test_loader, phase=self._TEST_PHASE, training=False)
-        self.print_metrics(metrics, phase=self._TEST_PHASE)
+        # Nothing here is a special case: the final evaluation is one ordinary
+        # phase that happens to carry ``compute_test_metrics``.
+        phase = Phase(self._TEST_PHASE, test_loader, metric_fn=self.compute_test_metrics)
+        metrics = self._execute_phase(phase)
+        self.print_metrics(metrics, phase.name)
         # Terminal operation, like the end of ``train()`` — release cached
         # blocks now that no further epochs depend on allocator reuse.
         self.empty_cuda_cache()
         return metrics
 
     @_require_setup
-    def execute_epoch(
+    def execute_phase(
         self,
-        loader: DataLoader,
-        phase: str = "custom",
+        phase: Phase,
         epoch: int | None = None,
         print_metrics: bool = False,
     ) -> dict[str, float]:
         """
-        Run one full epoch on a DataLoader.
+        Run one phase to completion, outside the training loop.
+
+        The building block :meth:`train` is made of — reach for it to drive your
+        own loop while keeping the trainer's metric aggregation, checkpointing,
+        hooks, AMP, and gradient accumulation.
 
         Args:
-            loader: DataLoader to iterate.
-            phase: Phase name (e.g. ``"train"``, ``"val"``).
+            phase: The phase to run.
             epoch: Epoch number, used for hook callbacks.
-            print_metrics: Print aggregated metrics after the epoch.
+            print_metrics: Print aggregated metrics after the phase.
 
         Returns:
-            Aggregated metrics for the epoch.
+            Aggregated metrics for the phase.
         """
-        training = self._is_training_phase(phase)
-        metrics = self._execute_epoch(loader, phase, training, epoch=epoch)
+        metrics = self._execute_phase(phase, epoch=epoch)
         if print_metrics:
-            self.print_metrics(metrics, phase)
+            self.print_metrics(metrics, phase.name)
         return metrics
 
     @_require_setup
     def execute_step(
         self,
         batch: Any,
-        phase: str,
+        phase: Phase,
         step: int | None = None,
         print_metrics: bool = False,
     ) -> dict[str, float]:
@@ -755,7 +787,8 @@ class BaseTrainer(abc.ABC):
 
         Args:
             batch: Batch of data.
-            phase: Phase name (e.g. ``"train"``).
+            phase: The phase this step belongs to. Only its ``training`` flag and
+                metric function are consulted; its loader is not iterated.
             step: 1-based step index for hook and dashboard bookkeeping. In a
                 training phase it also drives gradient accumulation — the
                 optimizer updates every ``accumulation_steps`` steps.
@@ -764,10 +797,9 @@ class BaseTrainer(abc.ABC):
         Returns:
             Metrics computed for the step.
         """
-        training = self._is_training_phase(phase)
-        metrics = self._execute_step(batch, phase, training, step=step)
+        metrics = self._execute_step(batch, phase, step=step)
         if print_metrics:
-            self.print_metrics(metrics, phase)
+            self.print_metrics(metrics, phase.name)
         return metrics
 
     # ── Setup & State ─────────────────────────────────────────────────────────
@@ -903,10 +935,10 @@ class BaseTrainer(abc.ABC):
         Raises:
             ValueError: If ``num_epochs`` was not set on the trainer.
         """
-        self._require_num_epochs()
-        while self._current_epoch < self.num_epochs:
+        num_epochs = self._require_num_epochs()
+        while self._current_epoch < num_epochs:
             self._current_epoch += 1
-            yield self._current_epoch, self.num_epochs
+            yield self._current_epoch, num_epochs
 
     def finalize_train_epoch(self, monitor_value: float | None = None) -> None:
         """
@@ -1074,26 +1106,26 @@ class BaseTrainer(abc.ABC):
     def save_artifacts(
         self,
         metric_names: list[str] | None = None,
-        phases: list[str] | None = None,
+        phase_names: list[str] | None = None,
     ) -> None:
         """
         Save checkpoints and export all metric artifacts for the current state.
 
         Args:
             metric_names: Metrics to include. ``None`` includes all.
-            phases: Phases to include. ``None`` includes all.
+            phase_names: Phase names to include. ``None`` includes all.
         """
         # These sub-steps are slow and GIL-holding (torch.save, matplotlib, JSON);
         # pulse the heartbeat between them so a slow one never trips *Offline*.
         self.save_checkpoints()
         self._dash_heartbeat()
         if self._epoch_metrics:
-            self.save_epoch_metric_plots(metric_names=metric_names, phases=phases)
-            self.export_epoch_metrics(metric_names=metric_names, phases=phases)
+            self.save_epoch_metric_plots(metric_names=metric_names, phase_names=phase_names)
+            self.export_epoch_metrics(metric_names=metric_names, phase_names=phase_names)
             self._dash_heartbeat()
         if self._step_metrics:
-            self.save_step_metric_plots(metric_names=metric_names, phases=phases)
-            self.export_step_metrics(metric_names=metric_names, phases=phases)
+            self.save_step_metric_plots(metric_names=metric_names, phase_names=phase_names)
+            self.export_step_metrics(metric_names=metric_names, phase_names=phase_names)
             self._dash_heartbeat()
 
     @_require_setup
@@ -1111,7 +1143,10 @@ class BaseTrainer(abc.ABC):
 
         if self.save_interval and self._current_epoch % self.save_interval == 0:
             epoch_path = self.get_checkpoint_path(f"epoch_{self._current_epoch}")
-            self._write_checkpoint(epoch_path, checkpoint, f"💾 Epoch {self._current_epoch} checkpoint saved: {epoch_path.name}")
+            self._write_checkpoint(
+                epoch_path, checkpoint,
+                f"💾 Epoch {self._current_epoch} checkpoint saved: {epoch_path.name}",
+            )
 
     @_require_setup
     def save_checkpoint(self, path: Path | str) -> None:
@@ -1133,7 +1168,10 @@ class BaseTrainer(abc.ABC):
             path: Destination file path.
         """
         path = Path(path)
-        self._write_checkpoint(path, self._build_checkpoint(weights_only=True), f"💾 Model weights saved: {path.name}")
+        self._write_checkpoint(
+            path, self._build_checkpoint(weights_only=True),
+            f"💾 Model weights saved: {path.name}",
+        )
 
     def backup_checkpoint(self, path: Path | str) -> None:
         """
@@ -1182,7 +1220,10 @@ class BaseTrainer(abc.ABC):
             strict: Enforce exact key matching.
             key_map: Optional mapping to rename state-dict keys before loading.
         """
-        self._load_checkpoint(Path(path), "💾 Loading model weights", strict=strict, key_map=key_map, weights_only=True)
+        self._load_checkpoint(
+            Path(path), "💾 Loading model weights",
+            strict=strict, key_map=key_map, weights_only=True,
+        )
 
     @_require_setup
     def load_latest_checkpoint(self) -> None:
@@ -1301,9 +1342,9 @@ class BaseTrainer(abc.ABC):
         path = Path(path)
         if path.is_dir():
             path = path / cls._CONFIG_FILENAME
-        with open(path, encoding="utf-8") as f:
+        with path.open(encoding="utf-8") as f:
             config = json.load(f)
-        params = inspect.signature(BaseTrainer.__init__).parameters
+        params = cls._init_params()
         config = {key: value for key, value in config.items() if key in params}
         return cls(**{**config, **overrides})
 
@@ -1329,36 +1370,36 @@ class BaseTrainer(abc.ABC):
     def get_epoch_metrics(
         self,
         metric_names: list[str] | None = None,
-        phases: list[str] | None = None,
+        phase_names: list[str] | None = None,
     ) -> MetricTable:
         """
         Return epoch-level metrics, optionally filtered.
 
         Args:
             metric_names: Metrics to include. ``None`` returns all.
-            phases: Phases to include. ``None`` returns all.
+            phase_names: Phase names to include. ``None`` returns all.
 
         Returns:
             Filtered metric table.
         """
-        return self._filter_metrics(self._epoch_metrics, metric_names=metric_names, phases=phases)
+        return self._filter_metrics(self._epoch_metrics, metric_names=metric_names, phase_names=phase_names)
 
     def get_step_metrics(
         self,
         metric_names: list[str] | None = None,
-        phases: list[str] | None = None,
+        phase_names: list[str] | None = None,
     ) -> MetricTable:
         """
         Return step-level metrics, optionally filtered.
 
         Args:
             metric_names: Metrics to include. ``None`` returns all.
-            phases: Phases to include. ``None`` returns all.
+            phase_names: Phase names to include. ``None`` returns all.
 
         Returns:
             Filtered metric table.
         """
-        return self._filter_metrics(self._step_metrics, metric_names=metric_names, phases=phases)
+        return self._filter_metrics(self._step_metrics, metric_names=metric_names, phase_names=phase_names)
 
     def clear_metrics(self) -> None:
         """Clear all recorded epoch and step metrics."""
@@ -1368,32 +1409,32 @@ class BaseTrainer(abc.ABC):
     def save_epoch_metric_plots(
         self,
         metric_names: list[str] | None = None,
-        phases: list[str] | None = None,
+        phase_names: list[str] | None = None,
     ) -> None:
         """
         Save epoch-level metric curve plots.
 
         Args:
             metric_names: Metrics to plot. ``None`` plots all.
-            phases: Phases to include. ``None`` includes all.
+            phase_names: Phase names to include. ``None`` includes all.
         """
-        metrics = self.get_epoch_metrics(metric_names=metric_names, phases=phases)
+        metrics = self.get_epoch_metrics(metric_names=metric_names, phase_names=phase_names)
         self._save_metric_plots(metrics, xlabel="epoch", split_phases=False)
         self.print("📈 Epoch-level metric curves saved.")
 
     def save_step_metric_plots(
         self,
         metric_names: list[str] | None = None,
-        phases: list[str] | None = None,
+        phase_names: list[str] | None = None,
     ) -> None:
         """
         Save step-level metric curve plots.
 
         Args:
             metric_names: Metrics to plot. ``None`` plots all.
-            phases: Phases to include. ``None`` includes all.
+            phase_names: Phase names to include. ``None`` includes all.
         """
-        metrics = self.get_step_metrics(metric_names=metric_names, phases=phases)
+        metrics = self.get_step_metrics(metric_names=metric_names, phase_names=phase_names)
         self._save_metric_plots(
             metrics,
             xlabel="step",
@@ -1406,19 +1447,19 @@ class BaseTrainer(abc.ABC):
     def export_epoch_metrics(
         self,
         metric_names: list[str] | None = None,
-        phases: list[str] | None = None,
+        phase_names: list[str] | None = None,
     ) -> Path:
         """
         Export epoch-level metrics to a JSON file.
 
         Args:
             metric_names: Metrics to export. ``None`` exports all.
-            phases: Phases to include. ``None`` includes all.
+            phase_names: Phase names to include. ``None`` includes all.
 
         Returns:
             Path to the written JSON file.
         """
-        metrics = self.get_epoch_metrics(metric_names=metric_names, phases=phases)
+        metrics = self.get_epoch_metrics(metric_names=metric_names, phase_names=phase_names)
         path = self.get_epoch_metrics_path()
         self._export_metrics(metrics, path)
         self.print(f"📄 Epoch-level metrics exported: {path.name}")
@@ -1427,19 +1468,19 @@ class BaseTrainer(abc.ABC):
     def export_step_metrics(
         self,
         metric_names: list[str] | None = None,
-        phases: list[str] | None = None,
+        phase_names: list[str] | None = None,
     ) -> Path:
         """
         Export step-level metrics to a JSON file.
 
         Args:
             metric_names: Metrics to export. ``None`` exports all.
-            phases: Phases to include. ``None`` includes all.
+            phase_names: Phase names to include. ``None`` includes all.
 
         Returns:
             Path to the written JSON file.
         """
-        metrics = self.get_step_metrics(metric_names=metric_names, phases=phases)
+        metrics = self.get_step_metrics(metric_names=metric_names, phase_names=phase_names)
         path = self.get_step_metrics_path()
         self._export_metrics(metrics, path)
         self.print(f"📄 Step-level metrics exported: {path.name}")
@@ -1460,80 +1501,21 @@ class BaseTrainer(abc.ABC):
     def get_metric_plot_path(
         self,
         metric_name: str,
-        phase: str | None = None,
+        phase_name: str | None = None,
         prefix: str | None = None,
     ) -> Path:
         """Return the output path for a metric curve plot PNG."""
-        filename = get_metric_plot_filename(metric_name, phase=phase, prefix=prefix)
+        filename = get_metric_plot_filename(metric_name, phase_name=phase_name, prefix=prefix)
         return self._plots_dir / filename
 
     # ── Logging & Display ─────────────────────────────────────────────────────
 
-    @staticmethod
-    def _os_name() -> str:
-        """Human-readable OS name and version: the distro on Linux (e.g.
-        ``Ubuntu 24.04``) and ``macOS <ver>`` on Darwin, not the kernel release."""
-        system = platform.system()
-        if system == "Linux":
-            try:
-                return platform.freedesktop_os_release().get("PRETTY_NAME") or "Linux"
-            except OSError:
-                return f"Linux {platform.release()}"
-        if system == "Darwin":
-            return f"macOS {platform.mac_ver()[0]}".rstrip()
-        return f"{system} {platform.release()}"
-
-    @staticmethod
-    def _cpu_name() -> str:
-        """Best-effort CPU model name. ``platform.processor()`` yields only the
-        architecture (e.g. ``x86_64``) off Windows, so query the OS directly and
-        fall back to the architecture only when the model is unavailable."""
-        system = platform.system()
-        try:
-            if system == "Windows":
-                import winreg
-                with winreg.OpenKey(
-                    winreg.HKEY_LOCAL_MACHINE,
-                    r"HARDWARE\DESCRIPTION\System\CentralProcessor\0",
-                ) as key:
-                    return winreg.QueryValueEx(key, "ProcessorNameString")[0].strip()
-            if system == "Darwin":
-                return subprocess.check_output(
-                    ["sysctl", "-n", "machdep.cpu.brand_string"], text=True
-                ).strip()
-            if system == "Linux":
-                for line in Path("/proc/cpuinfo").read_text().splitlines():
-                    if line.startswith("model name"):
-                        return line.split(":", 1)[1].strip()
-        except Exception:
-            pass
-        return platform.processor() or platform.machine() or "Unknown"
-
     def get_env_summary(self) -> dict[str, Any]:
         """Return the system and runtime environment summary as a dict."""
-        disk = shutil.disk_usage(self.run_dir)
-        result: dict[str, Any] = {
-            "OS":        self._os_name(),
-            "CPU":       self._cpu_name(),
-            "CPU cores": multiprocessing.cpu_count(),
-            "RAM":       f"{psutil.virtual_memory().total / 1e9:.2f} GB",
-            "Disk":      f"{disk.free / 1e9:.2f} / {disk.total / 1e9:.2f} GB free",
-        }
-        if torch.cuda.is_available():
-            index = self._cuda_index
-            props = torch.cuda.get_device_properties(index)
-            result["GPU"]   = f"cuda:{index} {torch.cuda.get_device_name(index)}"
-            result["VRAM"]  = f"{props.total_memory / 1e9:.2f} GB"
-            result["CUDA"]  = torch.version.cuda
-            result["cuDNN"] = str(torch.backends.cudnn.version())
-        else:
-            result |= {"GPU": "Not available", "VRAM": "-", "CUDA": "-", "cuDNN": "-"}
-        result["Python"]  = platform.python_version()
-        result["PyTorch"] = torch.__version__
-        for pkg in ("torchvision", "torchaudio"):
-            with contextlib.suppress(importlib.metadata.PackageNotFoundError):
-                result[pkg] = importlib.metadata.version(pkg)
-        return result
+        return env_summary(
+            self.run_dir,
+            gpu_index=self._cuda_index if torch.cuda.is_available() else None,
+        )
 
     def print_env_summary(self) -> None:
         """Print a system and runtime environment summary for experiment reproducibility."""
@@ -1576,11 +1558,34 @@ class BaseTrainer(abc.ABC):
             tree["Grad accumulation"] = f"{self.accumulation_steps} steps"
         self.print_dict_tree(tree, header="⚡ Optimization")
 
+    @staticmethod
+    def get_schedule_summary(*phases: Phase) -> dict[str, str]:
+        """Return the shape of one epoch as a dict: each phase name mapped to how
+        it runs.
+
+        The schedule is an argument to ``train()``, not trainer state, so it is
+        not part of ``config.json`` — that file holds constructor arguments and
+        must unpack straight back through :meth:`from_config`. This is the shape's
+        own summary, alongside the model's and the optimizer's.
+
+        Args:
+            *phases: The phases of one epoch, in the order they run.
+        """
+        def describe(phase: Phase) -> str:
+            kind = "training" if phase.training else "eval"
+            return kind if phase.every == 1 else f"{kind}, every {phase.every} epochs"
+
+        return {p.name: describe(p) for p in phases}
+
+    def print_schedule_summary(self, *phases: Phase) -> None:
+        """Print the shape of one epoch — the phases, in the order they run."""
+        self.print_dict_tree(self.get_schedule_summary(*phases), header="🗓️  Schedule")
+
     def print_status(self) -> None:
         """Print the current training state (epoch, best monitored value, and recent metrics)."""
         tree: dict[str, Any] = {
             "Completed epochs":   self._current_epoch,
-            f"Best val {self.monitor}": (
+            f"Best {self.monitor_phase} {self.monitor}": (
                 f"{self._best_metric:.4f}  (epoch {self._best_epoch})"
                 if self._best_epoch is not None else "-"
             ),
@@ -1589,18 +1594,18 @@ class BaseTrainer(abc.ABC):
         }
         self.print_dict_tree(tree, header="📋 Status")
 
-    def print_metrics(self, metrics: dict[str, float], phase: str) -> None:
+    def print_metrics(self, metrics: dict[str, float], phase_name: str) -> None:
         """
         Print a flat metrics table for a given phase.
 
         Args:
             metrics: Mapping of metric name to value.
-            phase: Phase label shown in the header.
+            phase_name: Phase label shown in the header.
         """
         print_dict_tree(
             metrics,
             max_depth=0,
-            header=f"📊 {phase.capitalize()}",
+            header=f"📊 {phase_name.capitalize()}",
             key_width=self._KEY_WIDTH,
             float_fmt=4,
             trailing_newline=True,
@@ -1652,12 +1657,21 @@ class BaseTrainer(abc.ABC):
 
     def snapshot_run(self, exclude: list[str] | None = None) -> None:
         """
-        Copy a lightweight snapshot of ``run_dir`` into ``run_snapshot_dir``.
+        Mirror ``run_dir`` into ``run_snapshot_dir``.
 
-        No-op when ``run_snapshot_dir`` is ``None``.
+        ``train()`` calls this after every epoch's artifacts are written, so a
+        configured ``run_snapshot_dir`` keeps an up-to-date copy of the run without
+        any further wiring — which is the point of a cloud-backed mirror on a host
+        that may vanish. Call it yourself for a snapshot at any other moment.
+
+        Nothing is excluded by default: the checkpoints are exactly what a mirror
+        exists to preserve. Pass *exclude* to leave the heavy parts behind when you
+        only want the metrics and plots.
+
+        A no-op when ``run_snapshot_dir`` is ``None``.
 
         Args:
-            exclude: Top-level directory names to omit from the snapshot.
+            exclude: Top-level entry names to omit from the snapshot.
         """
         if self.run_snapshot_dir is None:
             return
@@ -1666,85 +1680,74 @@ class BaseTrainer(abc.ABC):
     # ── GPU Utilities ─────────────────────────────────────────────────────────
 
     def print_gpu_temperature(self) -> None:
-        """Print the current GPU temperature via ``nvidia-smi``."""
+        """Print the current GPU temperature via ``nvidia-smi``; warn above
+        :attr:`_GPU_TEMP_WARN_C`.
+
+        The reading itself comes from :func:`~train4all.utils.system.gpu_temperature`;
+        what is left here is the reporting, which is the trainer's job.
+        """
         if not torch.cuda.is_available():
             self.print("CUDA not available. Skipping GPU temperature check.", level="warn")
             return
 
         try:
-            result = subprocess.run(
-                [
-                    "nvidia-smi", "-i", str(self._cuda_index),
-                    "--query-gpu=temperature.gpu", "--format=csv,noheader,nounits",
-                ],
-                capture_output=True,
-                text=True,
-                check=True,
-            )
-            temp_str = result.stdout.strip()
-            temp = int(temp_str) if temp_str.isdigit() else None
-            if temp is not None:
-                self.print(f"🌡️  GPU Temperature: {temp} °C")
-                if temp > self._GPU_TEMP_WARN_C:
-                    self.print("GPU temperature is high! Consider cooling down.", level="warn")
-            else:
-                self.print("GPU temperature info unavailable or invalid.", level="warn")
+            temp = gpu_temperature(self._cuda_index)
         except FileNotFoundError:
             self.print("'nvidia-smi' not found. Skipping GPU temperature check.", level="warn")
+            return
         except subprocess.CalledProcessError as e:
             self.print(f"'nvidia-smi' command failed: {e}", level="warn")
+            return
         except Exception as e:
             self.print(f"Failed to get GPU temperature: {e}", level="warn")
+            return
+
+        if temp is None:
+            self.print("GPU temperature info unavailable or invalid.", level="warn")
+            return
+        self.print(f"🌡️  GPU Temperature: {temp} °C")
+        if temp > self._GPU_TEMP_WARN_C:
+            self.print("GPU temperature is high! Consider cooling down.", level="warn")
 
     @staticmethod
     def empty_cuda_cache() -> None:
         """Free Python-held tensor references and clear the CUDA memory cache."""
-        if torch.cuda.is_available():
-            gc.collect()
-            torch.cuda.empty_cache()
+        empty_cuda_cache()
 
     # ── Internal: Training Loop ───────────────────────────────────────────────
 
-    def _execute_epoch(
-        self,
-        loader: DataLoader,
-        phase: str,
-        training: bool,
-        epoch: int | None = None,
-    ) -> dict[str, float]:
+    def _execute_phase(self, phase: Phase, epoch: int | None = None) -> dict[str, float]:
         self.clear_cache()
-        self._set_training_mode(training)
-        self.on_epoch_start(epoch, loader, phase)
-        metrics = self._iterate_epoch(loader, phase, training)
-        self._record_epoch_metrics(metrics, phase)
+        self._set_training_mode(phase.training)
+        self.on_phase_start(epoch, phase)
+        metrics = self._iterate_phase(phase)
+        self._record_epoch_metrics(metrics, phase.name)
         self._dash_update()
-        self.on_epoch_end(epoch, loader, metrics, phase)
-        # NOTE: no per-epoch ``empty_cache()`` here — releasing cached blocks
-        # back to the driver every epoch forces the allocator to re-acquire
-        # them next epoch, which slows training. A single cleanup runs at the
+        self.on_phase_end(epoch, phase, metrics)
+        # NOTE: no per-phase ``empty_cache()`` here — releasing cached blocks
+        # back to the driver every phase forces the allocator to re-acquire
+        # them next phase, which slows training. A single cleanup runs at the
         # end of ``train()``; call ``empty_cuda_cache()`` manually if needed.
         return metrics
 
-    def _iterate_epoch(self, loader: DataLoader, phase: str, training: bool) -> dict[str, float]:
-        # Start each training epoch with a clean gradient state so any
-        # unstepped accumulation from the previous epoch (possible for
+    def _iterate_phase(self, phase: Phase) -> dict[str, float]:
+        # Start each training phase with a clean gradient state so any
+        # unstepped accumulation from the previous one (possible for
         # IterableDataset loaders whose length is unknown) is discarded —
         # including the per-cycle weight that would normalize those gradients.
-        if training and self._optimizer is not None:
+        if phase.training and self._optimizer is not None:
             self._optimizer.zero_grad(set_to_none=True)
             self._cycle_weight = 0.0
         pbar: tqdm | None = (
-            tqdm(loader, desc=f"{phase.capitalize()} Epoch", leave=self._KEEP_PROGRESS_BAR)
+            tqdm(phase.loader, desc=f"{phase.name.capitalize()} Epoch", leave=self._KEEP_PROGRESS_BAR)
             if self.use_progress_bar else None
         )
         accumulated: dict[str, float] = {}
         total_weight = 0
-        max_step = self._loader_len(loader)  # 0 for length-less IterableDataset loaders
-        for step, batch in enumerate(pbar or loader, 1):
+        max_step = self._loader_len(phase.loader)  # 0 for length-less IterableDataset loaders
+        for step, batch in enumerate(pbar or phase.loader, 1):
             weight = self.get_batch_weight(batch)
-            metrics = self._execute_step(
-                batch, phase, training, step=step, max_step=max_step, weight=weight,
-            )
+            metrics = self._execute_step(batch, phase, step=step, max_step=max_step, weight=weight)
             self._accumulate_metrics(accumulated, metrics, weight)
             total_weight += weight
             if pbar is not None:
@@ -1755,8 +1758,7 @@ class BaseTrainer(abc.ABC):
     def _execute_step(
         self,
         batch: Any,
-        phase: str,
-        training: bool,
+        phase: Phase,
         step: int | None = None,
         max_step: int = 0,
         weight: float | None = None,
@@ -1765,57 +1767,60 @@ class BaseTrainer(abc.ABC):
         self.on_step_start(step, batch, phase)
         # A training step fires the optimizer update only on the step that closes
         # an accumulation cycle (every step when accumulation_steps == 1).
-        apply_update = training and self._is_accumulation_boundary(step or 0, max_step)
+        apply_update = phase.training and self._is_accumulation_boundary(step or 0, max_step)
         # The per-batch weight drives gradient-accumulation normalization. The
         # epoch loop already computes it (for metric averaging) and passes it in;
         # the standalone ``execute_step`` path computes it here on demand.
-        if training and weight is None:
+        if phase.training and weight is None:
             weight = self.get_batch_weight(batch)
-        metrics = self._compute_step(
-            batch, phase, training, weight=weight, apply_update=apply_update,
-        )
+        metrics = self._compute_step(batch, phase, weight=weight, apply_update=apply_update)
         # Throttle intermediate steps, but always write the final step of a
         # phase so the gauge's inner ring reaches 100% before the phase resets.
         self._dash_update(
             step=step or 0, max_step=max_step, step_metrics=metrics, phase=phase,
             throttle=max_step <= 0 or step != max_step,
         )
-        if training and self.record_step_metrics:
-            self._record_step_metrics(metrics, phase)
+        if self.record_step_metrics and phase.records_steps:
+            self._record_step_metrics(metrics, phase.name)
         self.on_step_end(step, batch, metrics, phase)
         return metrics
 
     def _compute_step(
         self,
         batch: Any,
-        phase: str,
-        training: bool,
+        phase: Phase,
         *,
         weight: float | None,
         apply_update: bool = True,
     ) -> dict[str, float]:
         # ``weight`` has no default but may be ``None``: evaluation ignores it,
         # while training always supplies it (computed in ``_execute_step``).
-        with torch.set_grad_enabled(training):
+        with torch.set_grad_enabled(phase.training):
             with self._autocast():
                 loss = self.compute_loss(batch)
+            # Validate *before* the optimizer touches the parameters. A non-finite
+            # loss makes every gradient non-finite, and a single step on those
+            # writes NaN into every weight — so the guard has to precede the step
+            # or it reports the divergence over a model it has already destroyed.
+            # Stopping here leaves the model intact and the run resumable from its
+            # last checkpoint. (Reading the value syncs with the device; the step
+            # pays that cost regardless, since ``loss`` is recorded as a metric.)
+            loss_value = self._validated_loss(loss)
             # Backward and the optimizer update run outside autocast — as AMP
             # requires — while still under the grad-enabled context above.
-            if training:
+            if phase.training:
                 assert weight is not None  # guaranteed by _execute_step when training
                 self._optimizer_step(loss, weight, apply_update=apply_update)
-        # The final test phase reports its own (possibly heavier) metrics; every
-        # other phase shares the cheap per-epoch ``compute_metrics`` path.
-        metric_fn = (
-            self.compute_test_metrics if phase == self._TEST_PHASE else self.compute_metrics
-        )
+        # The phase brings its own metric function, falling back to the trainer's
+        # shared one — so no phase is privileged by name.
+        metric_fn = phase.metric_fn or self.compute_metrics
         # Metrics never need gradients. Computing them under no_grad avoids
         # building and immediately discarding a graph on every step, which
         # otherwise leaks both memory and time during training phases (where
         # grad would still be enabled by the context above).
         with torch.no_grad(), self._autocast():
             metrics = metric_fn(batch)
-        metrics["loss"] = self._validated_loss(loss)
+        metrics["loss"] = loss_value
         return metrics
 
     def _autocast(self) -> torch.autocast:
@@ -1912,9 +1917,10 @@ class BaseTrainer(abc.ABC):
         if isinstance(self._scheduler, ReduceLROnPlateau):
             if monitor_value is None:
                 raise ValueError(
-                    f"ReduceLROnPlateau requires the '{self.monitor}' metric, but it "
-                    "was None (no validation this epoch, or the metric is missing). "
-                    "Provide a val_loader exposing it, or use a different scheduler."
+                    f"ReduceLROnPlateau requires the '{self.monitor}' metric from the "
+                    f"'{self.monitor_phase}' phase, but it was None this epoch. Give the "
+                    f"run a '{self.monitor_phase}' phase that reports '{self.monitor}' and "
+                    "runs every epoch (every=1), or use a different scheduler."
                 )
             self._scheduler.step(monitor_value)
         else:
@@ -1922,20 +1928,34 @@ class BaseTrainer(abc.ABC):
 
     # ── Internal: Early Stopping / Mode ───────────────────────────────────────
 
-    def _require_num_epochs(self) -> None:
-        """Guard the training-only entry points against an unset ``num_epochs``."""
+    def _require_num_epochs(self) -> int:
+        """Return ``num_epochs``, guarding the training-only entry points against
+        it being unset."""
         if self.num_epochs is None:
             raise ValueError(
                 "train() requires num_epochs; pass it to the constructor "
                 "(e.g. MyTrainer(num_epochs=10)). To only evaluate, use test() or "
-                "execute_epoch(); to inspect a saved file, use Checkpoint.load(...)."
+                "execute_phase(); to inspect a saved file, use Checkpoint.load(...)."
             )
+        return self.num_epochs
 
     @staticmethod
-    def _validate_mode(monitor_mode: str) -> str:
+    def _validate_monitor_mode(monitor_mode: str) -> str:
         if monitor_mode not in ("min", "max"):
             raise ValueError(f"monitor_mode must be 'min' or 'max'; got {monitor_mode!r}")
         return monitor_mode
+
+    @staticmethod
+    def _validate_accumulation_steps(accumulation_steps: int) -> int:
+        # Rejected rather than clamped to 1: silently rewriting the caller's value
+        # would still record the *given* one in ``config.json``, so the saved run
+        # would claim a setting it never trained with. ``Phase.every`` rejects the
+        # same way.
+        if accumulation_steps < 1:
+            raise ValueError(
+                f"accumulation_steps must be >= 1; got {accumulation_steps}"
+            )
+        return accumulation_steps
 
     def _worst_metric(self) -> float:
         """The sentinel best-so-far value: any real metric beats it."""
@@ -1961,8 +1981,59 @@ class BaseTrainer(abc.ABC):
             model.train(training)
         self.on_set_training_mode(training)
 
-    def _is_training_phase(self, phase: str) -> bool:
-        return phase in self.training_phases
+    # ── Internal: Phases ──────────────────────────────────────────────────────
+
+    def _validate_phases(self, phases: tuple[Phase, ...]) -> None:
+        """Reject a schedule that cannot mean what it says, and warn about the
+        ones that can but almost certainly do not."""
+        if not phases:
+            raise ValueError(
+                "train() requires at least one Phase, e.g. "
+                "train(Phase('train', train_loader, training=True), Phase('val', val_loader))."
+            )
+        names = [p.name for p in phases]
+        duplicates = sorted({n for n in names if names.count(n) > 1})
+        if duplicates:
+            raise ValueError(
+                "Phase names must be unique — they key the metric tables, the plots, "
+                f"and monitor_phase. Duplicated: {duplicates}"
+            )
+        if not any(p.training for p in phases):
+            self.print(
+                "No phase has training=True, so no gradient update will ever run. Pass "
+                "training=True to the phase that should learn.",
+                level="warn",
+            )
+        if self.patience is None:
+            return
+        monitored = next((p for p in phases if p.name == self.monitor_phase), None)
+        if monitored is None:
+            self.print(
+                "Early stopping is enabled (patience set) but no phase is named "
+                f"'{self.monitor_phase}' — it can never trigger without the "
+                f"'{self.monitor}' metric from that phase. Rename the phase, or point "
+                "monitor_phase at one in the schedule.",
+                level="warn",
+            )
+        elif monitored.every > 1:
+            self.print(
+                f"The monitored phase '{self.monitor_phase}' runs only every "
+                f"{monitored.every} epochs, so early stopping advances only on those "
+                "epochs — patience counts them, not raw epochs.",
+                level="warn",
+            )
+
+    def _phase_specs(self, phases: tuple[Phase, ...]) -> list[PhaseSpec]:
+        """The schedule as the dashboard sees it — names, gradients, lengths, cadence."""
+        return [
+            PhaseSpec(
+                name=p.name,
+                training=p.training,
+                steps=self._loader_len(p.loader),
+                every=p.every,
+            )
+            for p in phases
+        ]
 
     # ── Internal: Checkpoints (save) ──────────────────────────────────────────
 
@@ -2134,35 +2205,33 @@ class BaseTrainer(abc.ABC):
 
     # ── Internal: Metrics ─────────────────────────────────────────────────────
 
-    def _record_epoch_metrics(self, metrics: dict[str, float], phase: str) -> None:
-        self._record_metrics(self._epoch_metrics, metrics, phase)
+    def _record_epoch_metrics(self, metrics: dict[str, float], phase_name: str) -> None:
+        self._record_metrics(self._epoch_metrics, metrics, phase_name)
 
-    def _record_step_metrics(self, metrics: dict[str, float], phase: str) -> None:
+    def _record_step_metrics(self, metrics: dict[str, float], phase_name: str) -> None:
         if self.step_metric_names is not None:
             metrics = {k: v for k, v in metrics.items() if k in self.step_metric_names}
-        self._record_metrics(self._step_metrics, metrics, phase)
+        self._record_metrics(self._step_metrics, metrics, phase_name)
 
     @staticmethod
-    def _record_metrics(target: MetricTable, metrics: dict[str, float], phase: str) -> None:
+    def _record_metrics(target: MetricTable, metrics: dict[str, float], phase_name: str) -> None:
         for name, value in metrics.items():
-            target.setdefault(name, {}).setdefault(phase, []).append(value)
+            target.setdefault(name, {}).setdefault(phase_name, []).append(value)
 
     @staticmethod
     def _filter_metrics(
         metrics: MetricTable,
         metric_names: list[str] | None = None,
-        phases: list[str] | None = None,
+        phase_names: list[str] | None = None,
     ) -> MetricTable:
         result: MetricTable = {}
         for name, phase_dict in metrics.items():
-            if not isinstance(phase_dict, dict):
-                continue
             if metric_names is not None and name not in metric_names:
                 continue
             filtered = {
-                phase: values
-                for phase, values in phase_dict.items()
-                if (phases is None or phase in phases) and values
+                phase_name: values
+                for phase_name, values in phase_dict.items()
+                if (phase_names is None or phase_name in phase_names) and values
             }
             if filtered:
                 result[name] = filtered
@@ -2195,13 +2264,17 @@ class BaseTrainer(abc.ABC):
             if all(not v for v in phase_dict.values()):
                 continue
             if split_phases:
-                for phase, values in phase_dict.items():
+                for phase_name, values in phase_dict.items():
                     if not values:
                         continue
                     save_curves_plot(
-                        curves={phase: values},
-                        path=self.get_metric_plot_path(metric_name, phase=phase, prefix=path_prefix),
-                        title=get_metric_plot_title(metric_name, phase=phase, prefix=title_prefix),
+                        curves={phase_name: values},
+                        path=self.get_metric_plot_path(
+                            metric_name, phase_name=phase_name, prefix=path_prefix,
+                        ),
+                        title=get_metric_plot_title(
+                            metric_name, phase_name=phase_name, prefix=title_prefix,
+                        ),
                         xlabel=xlabel,
                         ylabel=metric_name,
                     )
@@ -2220,7 +2293,7 @@ class BaseTrainer(abc.ABC):
     def _write_json(self, path: Path, data: Any, label: str) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)
         try:
-            with open(path, "w", encoding="utf-8") as f:
+            with path.open("w", encoding="utf-8") as f:
                 json.dump(data, f, indent=4)
         except Exception as e:
             self.print(f"Failed to write {label}: {e}\n", level="warn")
@@ -2228,8 +2301,8 @@ class BaseTrainer(abc.ABC):
     def _format_epoch_metrics(self) -> dict[str, str]:
         return {
             metric_name: "  ".join(
-                f"{phase}={values[-1]:.4f}" if values else f"{phase}=N/A"
-                for phase, values in phase_dict.items()
+                f"{phase_name}={values[-1]:.4f}" if values else f"{phase_name}=N/A"
+                for phase_name, values in phase_dict.items()
             ) or "N/A"
             for metric_name, phase_dict in self._epoch_metrics.items()
         }
@@ -2243,7 +2316,7 @@ class BaseTrainer(abc.ABC):
             if self.pbar_metric_names and k in self.pbar_metric_names
         }
         if self.device.type == "cuda":
-            used, total, _ = self._gpu_memory_mib()
+            used, total, _ = self._gpu.memory_mib()
             display["GPU"] = f"{used}/{total}"
         pbar.set_postfix(display)
 
@@ -2260,34 +2333,18 @@ class BaseTrainer(abc.ABC):
 
     # ── Internal: Dashboard ───────────────────────────────────────────────────
 
-    def _dash_init(
-        self,
-        train_loader: DataLoader | None = None,
-        val_loader: DataLoader | None = None,
-    ) -> None:
+    def _dash_init(self, phases: tuple[Phase, ...]) -> None:
         if self._dashboard is None:
             return
         self._dashboard.initialize(
             self._config,
             env_summary=self.get_env_summary(),
             model_summary=self.get_model_summary(),
-            training_phases=self.training_phases,
+            phases=self._phase_specs(phases),
             monitor=self.monitor,
-            train_steps=self._loader_len(train_loader),
-            val_steps=self._loader_len(val_loader),
+            monitor_phase=self.monitor_phase,
         )
         self.print(f"🌐 Dashboard: {self._dashboard.url}\n")
-
-    @staticmethod
-    def _loader_len(loader: DataLoader | None) -> int:
-        """Return ``len(loader)`` for progress estimation, or ``0`` when unknown
-        (e.g. an ``IterableDataset`` loader exposes no length)."""
-        if loader is None:
-            return 0
-        try:
-            return len(loader)
-        except TypeError:
-            return 0
 
     def _dash_heartbeat(self) -> None:
         """Refresh the dashboard liveness timestamp (no-op without a dashboard)."""
@@ -2300,7 +2357,7 @@ class BaseTrainer(abc.ABC):
         step: int = 0,
         max_step: int = 0,
         step_metrics: dict[str, float] | None = None,
-        phase: str = "",
+        phase: Phase | None = None,
         throttle: bool = False,
     ) -> None:
         if self._dashboard is None or not self._dashboard.active:
@@ -2324,29 +2381,19 @@ class BaseTrainer(abc.ABC):
             self._best_metric,
             self._best_epoch,
             epochs_no_improve=self._epochs_no_improve,
-            is_gradient_phase=self._is_training_phase(phase),
+            is_gradient_phase=phase.training if phase else False,
             step=step,
             max_step=max_step,
             step_metrics=step_metrics,
-            phase=phase,
+            phase_name=phase.name if phase else "",
             learning_rate=lr,
             gpu_mem=self._dash_gpu_mem(),
         )
 
     def _dash_gpu_mem(self) -> tuple[float, float] | None:
-        """Return ``(used_gb, total_gb)`` GPU memory for the dashboard footprint
-        bar, or ``None`` when not on CUDA or no reading is available.
-
-        Uses the same NVML/``nvidia-smi`` probe as the progress bar and reports
-        decimal GB to match the VRAM total shown in the Environment panel.
-        """
-        if self.device.type != "cuda":
-            return None
-        used_mib, total_mib, _ = self._gpu_memory_mib()
-        if total_mib <= 0:
-            return None
-        mib_to_gb = (1 << 20) / 1e9
-        return (used_mib * mib_to_gb, total_mib * mib_to_gb)
+        """``(used_gb, total_gb)`` for the dashboard's footprint bar, or ``None``
+        when not on CUDA. The same probe the progress bar reads."""
+        return self._gpu.memory_gb() if self.device.type == "cuda" else None
 
     def _dash_finalize(self) -> None:
         if self._dashboard is None:
@@ -2357,7 +2404,7 @@ class BaseTrainer(abc.ABC):
             self._epoch_metrics,
             self._best_metric,
             self._best_epoch,
-            self._epochs_no_improve,
+            epochs_no_improve=self._epochs_no_improve,
         )
         time.sleep(self._dashboard.poll_s + self._DASH_EXTRA_WAIT_S)
 
@@ -2390,6 +2437,15 @@ class BaseTrainer(abc.ABC):
             m.reset_parameters()
 
     # ── Internal: Data Utilities ──────────────────────────────────────────────
+
+    @staticmethod
+    def _loader_len(loader: DataLoader) -> int:
+        """Return ``len(loader)`` for progress estimation, or ``0`` when unknown
+        (e.g. an ``IterableDataset`` loader exposes no length)."""
+        try:
+            return len(loader)
+        except TypeError:
+            return 0
 
     def _to_device(self, x: Any) -> Any:
         if isinstance(x, torch.Tensor):
@@ -2455,17 +2511,18 @@ class BaseTrainer(abc.ABC):
         scaler = torch.amp.GradScaler(enabled=enabled and dtype is torch.float16)
         return enabled, dtype, scaler
 
-    def _init_tf32(self) -> bool:
+    def _init_tf32(self) -> None:
         """Configure TF32 and the cuDNN autotuner from the ``tf32`` setting.
 
-        Returns whether TF32 ended up enabled. ``None`` auto-enables both only
-        when no ``seed`` is set, trading exact reproducibility for speed. Must
+        TF32 lives entirely in torch's global backend flags, so this resolves the
+        setting into them and keeps nothing of its own. ``None`` auto-enables both
+        only when no ``seed`` is set, trading exact reproducibility for speed. Must
         run *after* :meth:`reset_seed`, whose deterministic / ``benchmark=False``
         flags this may relax.
         """
         tf32 = self.tf32
         # TF32 only applies to CUDA; elsewhere it's a no-op, and an explicit
-        # request that can't be honored is warned about and ignored.
+        # request that can't be honoured is warned about and ignored.
         if self.device.type != "cuda":
             if tf32:
                 self.print(
@@ -2473,7 +2530,7 @@ class BaseTrainer(abc.ABC):
                     "ignored (TF32 only applies to CUDA).",
                     level="warn",
                 )
-            return False
+            return
 
         # ``None`` follows the seed (speed when not reproducing); a bool forces it.
         enabled = (self.seed is None) if tf32 is None else bool(tf32)
@@ -2491,14 +2548,23 @@ class BaseTrainer(abc.ABC):
         # deterministic flags reset_seed applies for a fixed seed).
         if enabled and self.seed is None:
             torch.backends.cudnn.benchmark = True
-        return enabled
+
+    @staticmethod
+    def _init_params() -> MappingProxyType[str, inspect.Parameter]:
+        """The constructor's parameters — the schema of the saved config.
+
+        The one place both sides of ``config.json`` consult: ``_customized_config``
+        filters what it writes against these defaults, and :meth:`from_config`
+        filters what it reads against these names.
+        """
+        return inspect.signature(BaseTrainer.__init__).parameters
 
     def _customized_config(self, provided: dict[str, Any]) -> dict[str, Any]:
         """Return only the entries whose value differs from the constructor's
         default, so a saved config records exactly what the caller customized
         (e.g. ``num_epochs`` is recorded when set, omitted when left ``None``).
         """
-        params = inspect.signature(BaseTrainer.__init__).parameters
+        params = self._init_params()
         return {
             key: value
             for key, value in provided.items()
@@ -2511,58 +2577,4 @@ class BaseTrainer(abc.ABC):
     @property
     def _cuda_index(self) -> int:
         """Index of the CUDA device the trainer reports on and probes."""
-        if self.device.type == "cuda" and self.device.index is not None:
-            return self.device.index
-        return torch.cuda.current_device() if torch.cuda.is_available() else 0
-
-    def _gpu_memory_mib(self) -> tuple[int, int, int]:
-        """Return ``(used, total, free)`` GPU memory in MiB for the selected device.
-
-        NVML is initialized once and the device handle is reused on every
-        subsequent call, so querying memory inside the per-step progress bar
-        costs a single cheap lookup rather than an init/shutdown cycle. When
-        NVML is unavailable, falls back to a ``nvidia-smi`` query whose result
-        is cached for :attr:`_GPU_MEM_TTL_S` seconds to avoid spawning a
-        subprocess on every step.
-        """
-        # Reuse the live NVML handle; drop it on error so the init path retries.
-        if self._nvml_handle is not None:
-            try:
-                return self._nvml_mib(self._nvml_handle)
-            except Exception:
-                self._nvml_handle = None
-
-        if not self._nvml_failed:
-            try:
-                import pynvml
-                pynvml.nvmlInit()
-                self._pynvml = pynvml
-                self._nvml_handle = pynvml.nvmlDeviceGetHandleByIndex(self._cuda_index)
-                return self._nvml_mib(self._nvml_handle)
-            except Exception:
-                self._nvml_failed = True  # NVML unavailable — use the smi fallback
-
-        now = time.time()
-        if now - self._gpu_mem_cache_t < self._GPU_MEM_TTL_S:
-            return self._gpu_mem_cache
-        self._gpu_mem_cache_t = now
-        try:
-            output = subprocess.check_output(
-                [
-                    "nvidia-smi",
-                    "-i", str(self._cuda_index),
-                    "--query-gpu=memory.used,memory.total",
-                    "--format=csv,noheader,nounits",
-                ],
-                encoding="utf-8",
-            )
-            used, total = (int(x) for x in output.split(","))  # int() tolerates whitespace
-            self._gpu_mem_cache = (used, total, total - used)
-        except Exception:
-            self._gpu_mem_cache = (0, 0, 0)
-        return self._gpu_mem_cache
-
-    def _nvml_mib(self, handle: Any) -> tuple[int, int, int]:
-        """Query an NVML device *handle*, returning ``(used, total, free)`` in MiB."""
-        mem = self._pynvml.nvmlDeviceGetMemoryInfo(handle)
-        return mem.used >> 20, mem.total >> 20, mem.free >> 20
+        return cuda_index(self.device)

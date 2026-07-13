@@ -10,7 +10,7 @@ __all__ = ["get_metric_plot_filename", "get_metric_plot_title", "save_curves_plo
 
 def get_metric_plot_title(
     metric_name: str,
-    phase: str | None = None,
+    phase_name: str | None = None,
     prefix: str | None = None,
 ) -> str:
     """
@@ -18,7 +18,7 @@ def get_metric_plot_title(
 
     Args:
         metric_name: Name of the metric (e.g. ``"loss"``).
-        phase: Optional phase label appended in parentheses (e.g. ``"train"``).
+        phase_name: Optional phase label appended in parentheses (e.g. ``"train"``).
         prefix: Optional prefix prepended to the title (e.g. ``"step-level"``).
 
     Returns:
@@ -28,15 +28,15 @@ def get_metric_plot_title(
     if prefix:
         parts.append(prefix)
     parts.append(metric_name)
-    if phase:
-        parts.append(f"({phase})")
+    if phase_name:
+        parts.append(f"({phase_name})")
     title = " ".join(parts).strip()
     return title[:1].upper() + title[1:] if title else ""
 
 
 def get_metric_plot_filename(
     metric_name: str,
-    phase: str | None = None,
+    phase_name: str | None = None,
     prefix: str | None = None,
     extension: str = "png",
 ) -> str:
@@ -45,7 +45,7 @@ def get_metric_plot_filename(
 
     Args:
         metric_name: Name of the metric (e.g. ``"loss"``).
-        phase: Optional phase label appended to the stem (e.g. ``"train"``).
+        phase_name: Optional phase label appended to the stem (e.g. ``"train"``).
         prefix: Optional prefix prepended to the stem (e.g. ``"step"``).
         extension: File extension without the leading dot. Defaults to ``"png"``.
 
@@ -56,8 +56,8 @@ def get_metric_plot_filename(
     if prefix:
         parts.append(prefix)
     parts.append(metric_name)
-    if phase:
-        parts.append(phase)
+    if phase_name:
+        parts.append(phase_name)
     return f"{'_'.join(parts)}.{extension}"
 
 

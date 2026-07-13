@@ -3,7 +3,7 @@ from collections.abc import Mapping, Sequence
 __all__ = ["MetricTable", "replace_dict_keys"]
 
 type MetricTable = dict[str, dict[str, list[float]]]
-"""Mapping of ``metric_name → phase → list[value]`` recorded over training."""
+"""Mapping of ``metric_name → phase_name → list[value]`` recorded over training."""
 
 
 def replace_dict_keys(

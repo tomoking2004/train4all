@@ -1,0 +1,91 @@
+from collections.abc import Callable
+from dataclasses import dataclass
+from typing import Any
+
+from torch.utils.data import DataLoader
+
+__all__ = ["MetricFn", "Phase"]
+
+type MetricFn = Callable[[Any], dict[str, float]]
+
+
+@dataclass(frozen=True, slots=True)
+class Phase:
+    """
+    One pass over a :class:`~torch.utils.data.DataLoader` within an epoch.
+
+    An epoch is a sequence of phases, and ``train()`` takes that sequence
+    directly — so the schedule is data, not control flow. The canonical run is
+    two phases::
+
+        trainer.train(
+            Phase("train", train_loader, training=True),
+            Phase("val", val_loader),
+        )
+
+    and anything else is the same expression with more phases. To keep the
+    training pass cheap, compute only the loss there and measure the expensive
+    metrics periodically on a subset::
+
+        trainer.train(
+            Phase("train", train_loader, training=True, metric_fn=lambda _: {}),
+            Phase("train_eval", train_subset_loader, every=5),
+            Phase("val", val_loader),
+        )
+
+    ``metric_fn=lambda _: {}`` suppresses only the metric function — the trainer
+    always records ``loss`` — so the training pass reports loss alone while
+    ``train_eval`` reports the full metric set on a slice of the same data,
+    every fifth epoch.
+
+    Phases are compared and stored by identity of their fields, and the name is
+    the key everything else is filed under: metric tables, plots, the dashboard
+    legend, and the trainer's ``monitor_phase``. Names must be unique within a
+    run.
+
+    Attributes:
+        name: Phase name. Used as the metric-table key, the plot legend entry,
+            and the value ``monitor_phase`` selects on.
+        loader: DataLoader iterated for this phase.
+        training: Run the pass with gradients and step the optimizer. ``False``
+            (the default) evaluates under ``torch.no_grad``, since most phases
+            only measure.
+        metric_fn: Per-batch metric function. ``None`` (the default) uses the
+            trainer's ``compute_metrics``. Pass any callable to give this phase
+            its own metrics — heavier report-only ones (as ``test()`` does with
+            ``compute_test_metrics``), or ``lambda _: {}`` for none at all.
+            Named for what it holds: a *function*, not the metric values every
+            other ``metrics`` in the framework refers to.
+        every: Run this phase only on epochs divisible by this number, so an
+            expensive measurement need not be paid every epoch. Defaults to ``1``
+            (every epoch). A ``monitor_phase`` with ``every > 1`` leaves the
+            monitored metric absent on the epochs it skips — early stopping then
+            does not advance, and ``ReduceLROnPlateau`` cannot step.
+        record_steps: Record per-step metrics for this phase when the trainer's
+            ``record_step_metrics`` is enabled. ``None`` (the default) follows
+            ``training``: the training pass has a step curve worth watching, a
+            short evaluation pass usually does not.
+    """
+
+    name: str
+    loader: DataLoader
+    training: bool = False
+    metric_fn: MetricFn | None = None
+    every: int = 1
+    record_steps: bool | None = None
+
+    def __post_init__(self) -> None:
+        if not self.name:
+            raise ValueError("A phase needs a non-empty name.")
+        if self.every < 1:
+            raise ValueError(f"Phase {self.name!r}: every must be >= 1; got {self.every}")
+
+    @property
+    def records_steps(self) -> bool:
+        """Whether per-step metrics are recorded for this phase (subject to the
+        trainer's ``record_step_metrics`` master switch)."""
+        return self.training if self.record_steps is None else self.record_steps
+
+    def runs_at(self, epoch: int) -> bool:
+        """Whether this phase runs at the 1-based ``epoch``."""
+        return epoch % self.every == 0
