@@ -9,7 +9,19 @@ description = "A minimal, extensible training framework for PyTorch."
 readme = "README.md"
 requires-python = ">=3.12"
 license = { file = "LICENSE" }
+authors = [{ name = "tomoking2004" }]
 keywords = ["pytorch", "deep-learning", "training", "machine-learning"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
 dependencies = [
     "matplotlib",
     "numpy",
@@ -19,9 +31,37 @@ dependencies = [
     "tqdm",
 ]
 
+[project.optional-dependencies]
+dev = ["pytest", "pytest-cov", "ruff"]
+
 [project.urls]
 Repository = "https://github.com/tomoking2004/train4all"
 
 [tool.setuptools.packages.find]
-where = ["."]
+# Without this the flat layout also ships `tests` as a top-level package.
 include = ["train4all*"]
+
+[tool.ruff]
+# The target version is not repeated here: ruff reads it from `requires-python`, so
+# raising the floor there cannot leave the linter behind on an older dialect.
+line-length = 110
+
+[tool.ruff.lint]
+select = ["E", "W", "F", "I", "N", "UP", "B", "SIM", "C4", "ARG", "PTH", "RUF"]
+ignore = [
+    # The 14 lifecycle hooks are deliberately empty no-ops on an abstract class:
+    # making them abstract would force every subclass to implement all 14, which
+    # is the opposite of the design.
+    "B027",
+    # Console output and docstrings use real typography on purpose — box rules,
+    # en dashes, and × in "Σ(metric × weight)".
+    "RUF001",
+    "RUF002",
+    # `import torch.nn.functional as F` is the universal PyTorch convention.
+    "N812",
+]
+
+[tool.ruff.lint.per-file-ignores]
+# dashboard.py embeds the dashboard's CSS and JavaScript as string literals;
+# they are web assets, not Python, and wrapping them would only obscure them.
+"train4all/utils/dashboard.py" = ["E501"]
