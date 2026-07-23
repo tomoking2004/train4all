@@ -198,7 +198,7 @@ class MyTrainer(BaseTrainer):
 | `_CHECKPOINT_BEST` | `"best"` | Stem of the best-epoch checkpoint (`best.pth`). |
 | `_METRICS_EPOCH` | `"epoch_metrics"` | Stem of the epoch-metrics JSON export. |
 | `_METRICS_STEP` | `"step_metrics"` | Stem of the step-metrics JSON export. |
-| `_TEST_PHASE` | `"test"` | Name of the [phase](#phases) `test()` builds. |
+| `_TEST_PHASE` | `"test"` | Name of the [phase](#phases) the `test(loader)` shorthand builds. Pass `test()` a `Phase` to name it anything else. |
 | `_KEY_WIDTH` | `32` | Column width for printed metric and summary tables. |
 | `_KEEP_PROGRESS_BAR` | `False` | Keep tqdm bars on screen after each epoch completes. |
 | `_GPU_TEMP_WARN_C` | `85` | `print_gpu_temperature()` warns above this, in °C. |
@@ -234,7 +234,7 @@ def compute_metrics(self, batch: Any) -> dict[str, float]:
 
 #### Optional: test-only metrics
 
-The final evaluation runs once, so it can afford heavier, report-only metrics that would be wasteful every epoch. `compute_test_metrics` is the metric function `test()` gives the phase it builds; the default delegates to `compute_metrics`, so test mirrors validation until you override it:
+The final evaluation runs once, so it can afford heavier, report-only metrics that would be wasteful every epoch. `compute_test_metrics` is the metric function `test(loader)` gives the phase that shorthand builds; the default delegates to `compute_metrics`, so test mirrors validation until you override it:
 
 ```python
 def compute_test_metrics(self, batch: Any) -> dict[str, float]:
@@ -243,13 +243,13 @@ def compute_test_metrics(self, batch: Any) -> dict[str, float]:
     return metrics
 ```
 
-Nothing routes here by phase *name* — this is simply a default a [`Phase`](#phases) can be given, so any phase can carry it: `Phase("audit", audit_loader, metric_fn=self.compute_test_metrics)`.
+Nothing routes here by phase *name*, and no entry point injects it — this is simply a default a [`Phase`](#phases) can be given, so any phase can carry it: `Phase("audit", audit_loader, metric_fn=self.compute_test_metrics)`.
 
 ---
 
 ### Phases
 
-An epoch is a sequence of **phases**, and `train()` takes that sequence directly — the loop has no built-in notion of "train" and "val" beyond the names you choose. A `Phase` is the one place a pass over data is described:
+An epoch is a sequence of **phases**, and `train()` takes that sequence directly — the loop has no built-in notion of "train" and "val" beyond the names you choose. A `Phase` is the one place a pass over data is described, and every entry point that runs one speaks it: [`train()`](#training--evaluation), [`test()`](#training--evaluation), and the [`execute_phase()` / `execute_step()`](#custom-training-loop) building blocks.
 
 | Field | Default | Description |
 | :-- | :-- | :-- |
@@ -313,7 +313,23 @@ Run the full training loop. Calls `prepare_training()` first, then iterates epoc
 metrics: dict[str, float] = trainer.test(test_loader, use_best=True)
 ```
 
-Evaluate on a held-out test set. When `use_best=True`, loads the best **weights** from `best.pth` before running — use this for final reporting after `train()` completes. Only the weights are loaded, so evaluation never rewinds the epoch counter or truncates the recorded metric history to the best epoch (call `load_best_checkpoint()` for that deliberate full rewind). Per-step metrics come from `compute_test_metrics` (see above), so override it to report test-only metrics.
+Evaluate once, outside the training loop. When `use_best=True`, loads the best **weights** from `best.pth` before running — use this for final reporting after `train()` completes. Only the weights are loaded, so evaluation never rewinds the epoch counter or truncates the recorded metric history to the best epoch (call `load_best_checkpoint()` for that deliberate full rewind).
+
+The final evaluation is one ordinary [phase](#phases), so `test()` speaks the same vocabulary `train()` does. A `DataLoader` is shorthand for the canonical test phase — these two lines are the same call:
+
+```python
+trainer.test(test_loader)
+trainer.test(Phase("test", test_loader, metric_fn=trainer.compute_test_metrics))
+```
+
+Pass a `Phase` to say anything the shorthand cannot — above all a **name**, since the name is what the metrics, the plots, and the exports are filed under. Two test sets need two names, or their curves silently concatenate under one:
+
+```python
+trainer.test(Phase("test_id",  id_loader,  metric_fn=trainer.compute_test_metrics))
+trainer.test(Phase("test_ood", ood_loader, metric_fn=trainer.compute_test_metrics))
+```
+
+A phase you pass means exactly what it means everywhere else — nothing is injected into it, so `metric_fn=None` is the trainer's `compute_metrics`, as always. [`compute_test_metrics`](#optional-test-only-metrics) is what the *shorthand* reaches for, not a rule `test()` applies.
 
 ---
 

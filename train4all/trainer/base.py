@@ -173,10 +173,11 @@ class BaseTrainer(abc.ABC):
     _METRICS_EPOCH: str = "epoch_metrics"
     _METRICS_STEP: str  = "step_metrics"
 
-    # ── Name of the phase ``test()`` builds ───────────────────────────────────
-    # Only a name — the phase's behaviour (no gradients, ``compute_test_metrics``)
-    # travels in the :class:`Phase` that ``test()`` constructs, not in a lookup
-    # keyed off this string.
+    # ── Name of the phase ``test(loader)`` builds ─────────────────────────────
+    # Only the default name of the shorthand's phase — the behaviour (no gradients,
+    # ``compute_test_metrics``) travels in the :class:`Phase` that shorthand builds,
+    # not in a lookup keyed off this string. Pass ``test()`` a Phase to name it
+    # anything else.
     _TEST_PHASE: str = "test"
 
     # ── GPU probe tunables ────────────────────────────────────────────────────
@@ -413,14 +414,15 @@ class BaseTrainer(abc.ABC):
         """
         Compute evaluation metrics for the final test phase.
 
-        The metric function :meth:`test` gives the phase it builds. Final
-        evaluation runs once, so it can afford heavier, report-only metrics (AUC,
-        per-class F1, calibration, confusion matrices, …) that would be wasteful
-        every epoch. The default delegates to ``compute_metrics``, so test
+        The metric function ``test(loader)`` gives the phase that shorthand builds.
+        Final evaluation runs once, so it can afford heavier, report-only metrics
+        (AUC, per-class F1, calibration, confusion matrices, …) that would be
+        wasteful every epoch. The default delegates to ``compute_metrics``, so test
         mirrors validation until you override it.
 
-        Nothing routes here by phase name — this is simply the default a
-        ``Phase`` can be given. Any phase can carry its own metric function::
+        Nothing routes here by phase name, and no entry point injects it — this is
+        simply the default the shorthand reaches for, and any phase can carry it
+        (or any other metric function) explicitly::
 
             Phase("audit", audit_loader, metric_fn=self.compute_test_metrics)
 
@@ -723,17 +725,36 @@ class BaseTrainer(abc.ABC):
     @_require_setup
     def test(
         self,
-        test_loader: DataLoader,
+        phase: Phase | DataLoader,
         use_best: bool = False,
     ) -> dict[str, float]:
         """
-        Evaluate the model on the test set.
+        Evaluate the model once, outside the training loop.
 
-        Per-step metrics come from ``compute_test_metrics`` (which defaults to
-        ``compute_metrics``), so override it to report heavier, test-only metrics.
+        The final evaluation is one ordinary phase — nothing here is a special
+        case — so it is spelled in the same vocabulary as :meth:`train`. Passing a
+        DataLoader is shorthand for the canonical test phase::
+
+            trainer.test(test_loader)
+            trainer.test(Phase(self._TEST_PHASE, test_loader,
+                               metric_fn=self.compute_test_metrics))  # the same
+
+        Pass a :class:`~train4all.trainer.phase.Phase` to say anything the
+        shorthand cannot — most of all a name, since the name is what the metrics,
+        the plots, and the exports are filed under. Two test sets need two names,
+        or their curves silently concatenate under one::
+
+            trainer.test(Phase("test_id",  id_loader,  metric_fn=self.compute_test_metrics))
+            trainer.test(Phase("test_ood", ood_loader, metric_fn=self.compute_test_metrics))
+
+        A phase you pass means exactly what it means everywhere else — nothing is
+        injected into it, so ``metric_fn=None`` is the trainer's ``compute_metrics``
+        as always. ``compute_test_metrics`` is what the *shorthand* reaches for, not
+        a rule this method applies.
 
         Args:
-            test_loader: DataLoader for test data.
+            phase: The phase to evaluate, or a DataLoader for the canonical test
+                phase (named :attr:`_TEST_PHASE`, carrying ``compute_test_metrics``).
             use_best: Load the best **weights** before evaluating. Only the
                 weights are loaded — evaluation never restores the training
                 state or metric history, so it cannot rewind the epoch counter
@@ -743,14 +764,14 @@ class BaseTrainer(abc.ABC):
         Returns:
             Mapping of metric name to value.
         """
+        if isinstance(phase, DataLoader):
+            phase = Phase(self._TEST_PHASE, phase, metric_fn=self.compute_test_metrics)
+
         if use_best:
             self.print()
             self.load_best_weights()
 
-        self.print("\n── Test Epoch\n")
-        # Nothing here is a special case: the final evaluation is one ordinary
-        # phase that happens to carry ``compute_test_metrics``.
-        phase = Phase(self._TEST_PHASE, test_loader, metric_fn=self.compute_test_metrics)
+        self.print(f"\n── {phase.name.capitalize()} Epoch\n")
         metrics = self._execute_phase(phase)
         self.print_metrics(metrics, phase.name)
         # Terminal operation, like the end of ``train()`` — release cached

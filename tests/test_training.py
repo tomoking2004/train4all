@@ -86,20 +86,50 @@ def test_early_stopping_reads_the_monitored_phase(run_dir):
     assert trainer._current_epoch < 20, "early stopping never triggered"
 
 
-def test_test_uses_compute_test_metrics(run_dir):
-    class WithTestMetrics(TinyTrainer):
-        def compute_test_metrics(self, batch: Any) -> dict[str, float]:
-            metrics = self.compute_metrics(batch)
-            metrics["report_only"] = 1.0
-            return metrics
+class WithTestMetrics(TinyTrainer):
+    """A trainer whose test-only metric is visible by its name alone."""
 
+    def compute_test_metrics(self, batch: Any) -> dict[str, float]:
+        metrics = self.compute_metrics(batch)
+        metrics["report_only"] = 1.0
+        return metrics
+
+
+def test_the_dataloader_shorthand_builds_the_canonical_test_phase(run_dir):
     trainer = WithTestMetrics(
         num_epochs=1, learning_rate=0.1, run_dir=run_dir, use_progress_bar=False,
     )
     trainer.train(Phase("train", make_loader(8), training=True))
     metrics = trainer.test(make_loader(8))
-    assert metrics["report_only"] == 1.0
-    assert "report_only" not in trainer.get_epoch_metrics().get("report_only", {}).get("train", [])
+    assert metrics["report_only"] == 1.0, "the shorthand reaches for compute_test_metrics"
+    # Recorded under the test phase and nowhere else — the training phase kept the
+    # trainer's own ``compute_metrics``.
+    assert set(trainer.get_epoch_metrics()["report_only"]) == {trainer._TEST_PHASE}
+
+
+def test_test_takes_a_phase_so_two_test_sets_keep_their_own_names(run_dir):
+    """The reason test() speaks Phase: without a name, two test sets concatenate."""
+    trainer = WithTestMetrics(
+        num_epochs=1, learning_rate=0.1, run_dir=run_dir, use_progress_bar=False,
+    )
+    trainer.train(Phase("train", make_loader(8), training=True))
+    trainer.test(Phase("test_id", make_loader(8), metric_fn=trainer.compute_test_metrics))
+    trainer.test(Phase("test_ood", make_loader(8), metric_fn=trainer.compute_test_metrics))
+
+    report_only = trainer.get_epoch_metrics()["report_only"]
+    assert set(report_only) == {"test_id", "test_ood"}
+    assert all(len(values) == 1 for values in report_only.values()), "the two runs stayed apart"
+
+
+def test_a_phase_passed_to_test_means_what_it_means_everywhere_else(run_dir):
+    """Nothing is injected: metric_fn=None is compute_metrics, as in any other phase."""
+    trainer = WithTestMetrics(
+        num_epochs=1, learning_rate=0.1, run_dir=run_dir, use_progress_bar=False,
+    )
+    trainer.train(Phase("train", make_loader(8), training=True))
+    metrics = trainer.test(Phase("audit", make_loader(8)))
+    assert "accuracy" in metrics
+    assert "report_only" not in metrics, "test() must not force compute_test_metrics on a phase"
 
 
 def test_the_step_cache_bridges_loss_and_metrics(trainer):
