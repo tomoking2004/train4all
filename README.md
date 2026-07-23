@@ -671,6 +671,8 @@ Nothing is excluded by default — the checkpoints are exactly what a mirror exi
 trainer.snapshot_run(exclude=["checkpoints"])
 ```
 
+Repeating the mirror is cheap and safe by construction, which is what lets the loop take it unattended: only the files that changed are copied, each one is replaced atomically, and whatever the run no longer has is deleted **last**, once every copy is in place. So the mirror is never emptied and never holds a half-written file — interrupt the run at any moment and every file in it is whole, from this epoch or the previous one. A mirror that cleared itself before rewriting would instead be empty precisely when the host it guards against is the one that vanished.
+
 The destination must lie outside `run_dir`; a mirror nested inside its own source would copy itself and grow on every epoch, so it is rejected.
 
 ---
@@ -745,7 +747,7 @@ from train4all.utils import TrainerLogger, print_dict_tree, remove_dir
 | `save_curves_plot` | Save labelled 1-D curves to a PNG — matplotlib, without pyplot's global state. |
 | `get_metric_plot_title` | Build a plot title from metric name, phase name, and prefix. |
 | `get_metric_plot_filename` | Build a plot filename from the same parts. |
-| `copy_dir` | Recursive copy with an exclude list — what [`snapshot_run()`](#snapshot) uses. Refuses a destination inside the source. |
+| `copy_dir` | Recursive copy with an exclude list — the repeatable, atomic mirror [`snapshot_run()`](#snapshot) is built on. Refuses a destination inside the source. |
 | `remove_dir` | Recursive delete that clears read-only flags first. |
 | `replace_dict_keys` | Rewrite substrings in nested dict keys — what `key_map` uses. |
 | `Dashboard` | The [live dashboard](#live-dashboard) engine. |

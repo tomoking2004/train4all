@@ -573,7 +573,7 @@ class Dashboard:
 
     @staticmethod
     def _atomic_write(path: Path, text: str) -> None:
-        """Write *text* to *path* atomically via a temp file + ``os.replace``.
+        """Write *text* to *path* atomically via a temp file + ``Path.replace``.
 
         Readers (the browser over HTTP, or the keepalive thread) therefore only
         ever observe a complete file — never a half-written one. Retries briefly

@@ -1664,6 +1664,11 @@ class BaseTrainer(abc.ABC):
         any further wiring — which is the point of a cloud-backed mirror on a host
         that may vanish. Call it yourself for a snapshot at any other moment.
 
+        Repeating it is cheap and safe, which is what lets the loop do it unattended:
+        :func:`~train4all.utils.copy_dir` copies only the files that changed, replaces
+        each atomically, and prunes last — so an interrupted snapshot leaves the
+        mirror whole rather than gone.
+
         Nothing is excluded by default: the checkpoints are exactly what a mirror
         exists to preserve. Pass *exclude* to leave the heavy parts behind when you
         only want the metrics and plots.
