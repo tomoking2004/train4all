@@ -193,7 +193,22 @@ def test_a_nonfinite_metric_never_reaches_the_browser(dash, config, tmp_path):
 
     assert d["last_step_metrics"] == {"loss": 0.5, "f1": None}
     assert d["epoch_metrics"]["f1"]["train"] == [None]
-    assert d["step_loss"] == [0.5], "a non-finite loss must never enter the window"
+    assert d["step_loss"] == [0.5], "one divergent metric blanked the finite loss too"
+
+
+def test_a_nonfinite_loss_never_enters_the_step_window(dash, config, tmp_path):
+    """The window is auto-scaled, so one NaN or Infinity would collapse the whole trace —
+    and unlike the payload's other numbers it cannot be published as `null` instead: this
+    is a list of points to draw, not a readout with an absent state.
+    """
+    dash.initialize({}, phases=SCHEDULE)
+    for step, loss in enumerate([0.9, float("nan"), float("inf"), -float("inf"), 0.7], 1):
+        dash.update(1, 5, step=step, max_step=10,
+                    step_metrics={"loss": loss}, phase_name="train")
+    d = payload(tmp_path, config)
+
+    assert d["step_loss"] == [0.9, 0.7], "a non-finite loss entered the window"
+    assert d["step_loss_last"] == 5, "the surviving samples kept their true step numbers"
 
 
 # ── Heartbeat ─────────────────────────────────────────────────────────────────

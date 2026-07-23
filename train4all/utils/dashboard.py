@@ -390,7 +390,7 @@ class Dashboard:
         # framework always records a ``loss`` entry.
         if phase_name and step_metrics:
             loss = step_metrics.get("loss")
-            if isinstance(loss, (int, float)) and loss == loss and abs(loss) != float("inf"):
+            if isinstance(loss, (int, float)) and math.isfinite(loss):
                 if phase_name != self._step_phase:
                     self._step_loss.clear()
                     self._step_nums.clear()
