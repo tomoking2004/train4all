@@ -20,10 +20,8 @@ It serves both sides of the lifecycle:
         print(ckpt.training_state["best_epoch"])
 """
 
-from __future__ import annotations
-
 from pathlib import Path
-from typing import Any
+from typing import Any, Self
 
 import torch
 
@@ -68,7 +66,7 @@ class Checkpoint:
     # ── Construction & Persistence ────────────────────────────────────────────
 
     @classmethod
-    def load(cls, path: Path | str, *, map_location: Any = "cpu") -> Checkpoint:
+    def load(cls, path: Path | str, *, map_location: Any = "cpu") -> Self:
         """
         Load a checkpoint file from disk.
 
@@ -106,7 +104,7 @@ class Checkpoint:
         scaler: dict[str, Any] | None = None,
         training_state: dict[str, Any] | None = None,
         metrics: dict[str, MetricTable] | None = None,
-    ) -> Checkpoint:
+    ) -> Self:
         """
         Assemble a checkpoint, ready to :meth:`save`.
 

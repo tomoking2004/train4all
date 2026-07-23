@@ -8,8 +8,6 @@ same way it delegates the on-disk format to :class:`~train4all.Checkpoint`, so t
 trainer's own file stays about training.
 """
 
-from __future__ import annotations
-
 import contextlib
 import gc
 import importlib.metadata
