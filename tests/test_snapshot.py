@@ -65,6 +65,42 @@ def test_exclude_leaves_the_heavy_parts_behind(tmp_path):
     assert not (mirror / "checkpoints").exists()
 
 
+def test_the_configured_exclude_shapes_every_epochs_mirror(tmp_path):
+    """The per-epoch mirror is unattended, so its exclusions can only be configuration.
+
+    Left as a call-site argument alone, `exclude` was unreachable from the one caller
+    that runs on its own — a run could mirror everything, or nothing.
+    """
+    run, mirror = tmp_path / "run", tmp_path / "mirror"
+    trainer = TinyTrainer(
+        num_epochs=2, learning_rate=0.1, run_dir=run,
+        run_snapshot_dir=mirror, run_snapshot_exclude=["checkpoints"],
+        use_progress_bar=False,
+    )
+    trainer.train(Phase("train", make_loader(8), training=True))
+
+    assert (mirror / "metrics" / "epoch_metrics.json").exists()
+    assert not (mirror / "checkpoints").exists(), "the configured exclude did not reach the loop"
+    assert (run / "checkpoints" / "latest.pth").exists(), "excluded from the mirror, not the run"
+
+
+def test_a_call_overrides_the_configured_exclude(tmp_path):
+    run, mirror = tmp_path / "run", tmp_path / "mirror"
+    trainer = TinyTrainer(
+        num_epochs=1, learning_rate=0.1, run_dir=run,
+        run_snapshot_dir=mirror, run_snapshot_exclude=["checkpoints"],
+        use_progress_bar=False,
+    )
+    trainer.train(Phase("train", make_loader(8), training=True))
+    assert not (mirror / "checkpoints").exists()
+
+    trainer.snapshot_run(exclude=[])   # this call alone mirrors everything
+    assert (mirror / "checkpoints" / "latest.pth").exists()
+
+    trainer.snapshot_run()             # a bare call is the configured mirror again
+    assert not (mirror / "checkpoints").exists()
+
+
 def test_a_mirror_inside_the_run_is_rejected(tmp_path):
     """Nested inside its own source, each epoch's copy would contain the last."""
     run = tmp_path / "run"

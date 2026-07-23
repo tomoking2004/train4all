@@ -128,6 +128,13 @@ class BaseTrainer(abc.ABC):
         run_dir: Output directory for checkpoints, metrics, logs, and plots.
         run_snapshot_dir: Directory for a lightweight snapshot copy of ``run_dir``.
             Snapshotting is disabled when ``None``.
+        run_snapshot_exclude: Top-level entry names left out of every snapshot —
+            e.g. ``["checkpoints"]`` to mirror only the metrics and plots.
+            ``None`` (default) excludes nothing. What a mirror leaves behind is a
+            standing property of the run, so it is configured here rather than
+            only at a call site: the per-epoch mirror ``train()`` takes is
+            unattended, and could otherwise never be anything but complete.
+            :meth:`snapshot_run` overrides it for a single call.
         resume: Resume from the latest checkpoint at the start of training.
         save_interval: Save a periodic checkpoint every *N* epochs.
         record_step_metrics: Record per-step metrics. The master switch; each
@@ -203,6 +210,7 @@ class BaseTrainer(abc.ABC):
         seed: int | None = None,
         run_dir: Path | str = "run",
         run_snapshot_dir: Path | str | None = None,
+        run_snapshot_exclude: list[str] | None = None,
         resume: bool = True,
         save_interval: int | None = None,
         record_step_metrics: bool = False,
@@ -248,6 +256,7 @@ class BaseTrainer(abc.ABC):
         self._metrics_dir     = self.run_dir / self._METRICS_DIRNAME
         self._plots_dir       = self.run_dir / self._PLOTS_DIRNAME
         self.run_snapshot_dir = Path(run_snapshot_dir) if run_snapshot_dir else None
+        self.run_snapshot_exclude = run_snapshot_exclude
         self.resume = resume
         self.save_interval = save_interval
 
@@ -690,6 +699,8 @@ class BaseTrainer(abc.ABC):
                 # Mirror the run once the epoch's artifacts are on disk, so the copy
                 # is always a complete epoch. A no-op unless ``run_snapshot_dir`` is
                 # set — but when it is, this is what makes the setting mean anything.
+                # Bare on purpose: an unattended call can carry no policy of its own,
+                # so the mirror's shape is the trainer's (``run_snapshot_exclude``).
                 self.snapshot_run()
                 self._dash_update()
                 self.on_train_epoch_end(epoch)
@@ -1669,18 +1680,29 @@ class BaseTrainer(abc.ABC):
         each atomically, and prunes last — so an interrupted snapshot leaves the
         mirror whole rather than gone.
 
+        What the mirror leaves behind belongs to the run, not to a call, so it is
+        configured as ``run_snapshot_exclude`` — a bare call takes whatever the
+        trainer is set to take, whether the caller is you or the epoch loop.
         Nothing is excluded by default: the checkpoints are exactly what a mirror
-        exists to preserve. Pass *exclude* to leave the heavy parts behind when you
-        only want the metrics and plots.
+        exists to preserve.
+
+        *exclude* overrides that policy for this call alone. ``None`` (the default)
+        defers to it, and ``[]`` mirrors everything even when the policy excludes
+        something.
 
         A no-op when ``run_snapshot_dir`` is ``None``.
 
         Args:
-            exclude: Top-level entry names to omit from the snapshot.
+            exclude: Top-level entry names to omit from this snapshot. ``None``
+                defers to ``run_snapshot_exclude``.
         """
         if self.run_snapshot_dir is None:
             return
-        copy_dir(src=self.run_dir, dst=self.run_snapshot_dir, exclude=exclude)
+        copy_dir(
+            src=self.run_dir,
+            dst=self.run_snapshot_dir,
+            exclude=self.run_snapshot_exclude if exclude is None else exclude,
+        )
 
     # ── GPU Utilities ─────────────────────────────────────────────────────────
 

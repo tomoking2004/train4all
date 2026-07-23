@@ -165,6 +165,7 @@ Every parameter is optional, and all except `num_epochs` are **keyword-only**, s
 | `seed` | `None` | Global random seed for Python, NumPy, and PyTorch. |
 | `run_dir` | `"run"` | Output directory for checkpoints, metrics, logs, and plots. |
 | `run_snapshot_dir` | `None` | Mirror directory for `run_dir`. When set, `train()` [snapshots](#snapshot) the run there after every epoch. Must lie outside `run_dir`. |
+| `run_snapshot_exclude` | `None` | Top-level entries left out of every [snapshot](#snapshot) — e.g. `["checkpoints"]` to mirror the metrics and plots alone. `None` excludes nothing. What a mirror leaves behind belongs to the run, not to one call, so the unattended per-epoch mirror follows it too; `snapshot_run(exclude=...)` overrides it for a single call. |
 | `resume` | `True` | Resume from `latest.pth` at the start of training. When `False`, `prepare_training()` first clears the run's previous artifacts (`checkpoints/`, `metrics/`, `plots/`, and dashboard files) and starts a fresh log, so a fresh run never inherits stale files — `config.json` and any user files in `run_dir` are kept, and evaluation-only flows (calling `test()` without training) are unaffected. |
 | `save_interval` | `None` | Save a periodic checkpoint every N epochs. |
 | `record_step_metrics` | `False` | Record per-step metrics. The master switch; each phase decides whether it takes part via `Phase.record_steps`, which defaults to the training phases. |
@@ -665,10 +666,23 @@ trainer = MyTrainer(
 trainer.train(...)   # every epoch is mirrored; no further wiring
 ```
 
-Nothing is excluded by default — the checkpoints are exactly what a mirror exists to preserve. Call it yourself for a snapshot at any other moment, and pass `exclude` to leave the heavy parts behind when you only want the metrics and plots:
+Nothing is excluded by default — the checkpoints are exactly what a mirror exists to preserve. When the mirror should stay light, that is a standing property of the run rather than of one call — the per-epoch snapshot is unattended, and an argument only a hand-written call could reach would never touch it — so it is configured beside the directory:
 
 ```python
-trainer.snapshot_run(exclude=["checkpoints"])
+trainer = MyTrainer(
+    num_epochs=50,
+    run_dir="run",
+    run_snapshot_dir="/mnt/gdrive/experiments/run",
+    run_snapshot_exclude=["checkpoints"],  # every epoch: the metrics and plots alone
+)
+```
+
+Call `snapshot_run()` yourself for a snapshot at any other moment. A bare call takes whatever the trainer is set to take — the same mirror the epoch loop takes — and `exclude` overrides that for the one call:
+
+```python
+trainer.snapshot_run()                          # the configured mirror
+trainer.snapshot_run(exclude=["checkpoints"])   # this call only
+trainer.snapshot_run(exclude=[])                # this call only: mirror everything
 ```
 
 Repeating the mirror is cheap and safe by construction, which is what lets the loop take it unattended: only the files that changed are copied, each one is replaced atomically, and whatever the run no longer has is deleted **last**, once every copy is in place. So the mirror is never emptied and never holds a half-written file — interrupt the run at any moment and every file in it is whole, from this epoch or the previous one. A mirror that cleared itself before rewriting would instead be empty precisely when the host it guards against is the one that vanished.
