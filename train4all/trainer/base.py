@@ -1875,8 +1875,13 @@ class BaseTrainer(abc.ABC):
         # grad would still be enabled by the context above).
         with torch.no_grad(), self._autocast():
             metrics = metric_fn(batch)
-        metrics["loss"] = loss_value
-        return metrics
+        # Loss leads, and it is the trainer's — a metric function can neither redefine
+        # it nor displace it. Insertion order is what everything downstream reads the
+        # metrics in (the console tables, the progress bar, the exports, the plots), and
+        # the dashboard already puts loss first among its charts, so leading with it here
+        # is what makes them agree rather than merely tend to.
+        metrics.pop("loss", None)
+        return {"loss": loss_value, **metrics}
 
     def _autocast(self) -> torch.autocast:
         """Autocast context for the configured AMP device/dtype.

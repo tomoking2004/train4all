@@ -92,3 +92,24 @@ def test_clear_metrics_empties_both_tables(trainer):
     trainer.clear_metrics()
     assert trainer.get_epoch_metrics() == {}
     assert trainer.get_step_metrics() == {}
+
+
+def test_loss_leads_the_metrics(trainer):
+    """Insertion order is the order everything downstream shows: the console tables,
+    the progress bar, the exports, the plots. The dashboard puts loss first among its
+    charts, so the metrics have to arrive that way for the two to agree."""
+    trainer.train(Phase("train", make_loader(8), training=True))
+    assert list(trainer.get_epoch_metrics()) == ["loss", "accuracy"]
+
+
+def test_a_metric_function_can_neither_redefine_nor_displace_the_loss(run_dir):
+    class ClaimsTheLoss(TinyTrainer):
+        def compute_metrics(self, batch: Any) -> dict[str, float]:
+            return {"probe": 1.0, "loss": -1.0}   # not the trainer's loss, and not first
+
+    trainer = ClaimsTheLoss(
+        num_epochs=1, learning_rate=0.1, run_dir=run_dir, use_progress_bar=False,
+    )
+    metrics = trainer.execute_phase(Phase("train", make_loader(8), training=True))
+    assert list(metrics) == ["loss", "probe"]
+    assert metrics["loss"] > 0, "the metric function's 'loss' overwrote the real one"
