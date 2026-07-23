@@ -26,7 +26,7 @@ train4all is a minimal PyTorch training framework. Subclass `BaseTrainer`, imple
 - **Zero boilerplate** — one subclass, three methods, full training loop
 - **Composable epochs** — an epoch is whatever sequence of [`Phase`](#phases) objects you pass to `train()`; drop in a phase that measures expensive metrics on a subset of the training data every N epochs, and everything downstream (curves, dashboard, early stopping) follows
 - **Mixed precision** — automatic bf16 AMP on CUDA by default for lower VRAM and faster steps; opt into `"fp16"` for older cards or disable with `amp=False`. TF32 + cuDNN autotuner switch on automatically for unseeded runs (`tf32`)
-- **Scale on small GPUs** — gradient accumulation (`accumulation_steps`) simulates a larger effective batch at no extra memory cost, and per-model `torch.compile` (`compile=True`) unlocks graph-level speedups
+- **Scaling on small GPUs** — gradient accumulation (`accumulation_steps`) simulates a larger effective batch at no extra memory cost, and per-model `torch.compile` (`compile=True`) unlocks graph-level speedups
 - **Automatic checkpointing** — `latest.pth` after every epoch and `best.pth` whenever the monitored metric improves; periodic saves every N epochs, plus a standalone `Checkpoint` reader to inspect any file with no model or subclass
 - **Early stopping** — patience-based on any `monitor` metric (`min`/`max` mode), with automatic best-checkpoint tracking
 - **Live web dashboard** — a self-contained, dependency-free panel: progress gauge, live KPIs, per-step loss graph, per-metric charts, light & dark themes

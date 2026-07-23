@@ -73,7 +73,7 @@ def save_curves_plot(
     figsize: tuple[float, float] = (6.0, 4.0),
 ) -> Path:
     """
-    Save a plot of one or more labeled 1-D curves to disk.
+    Save a plot of one or more labelled 1-D curves to disk.
 
     Each curve is plotted against its 1-based index. The function is fully
     state-isolated: it creates its own ``Figure`` with an explicit Agg canvas,
