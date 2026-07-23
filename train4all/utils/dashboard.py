@@ -228,7 +228,7 @@ class Dashboard:
         self._step_loss: deque[float] = deque(maxlen=_STEP_HISTORY)
         self._step_nums: deque[int] = deque(maxlen=_STEP_HISTORY)
         self._step_phase: str = ""
-        self._learning_rate: float | None = None
+        self._learning_rate: float | list[float] | None = None
         self._gpu_mem: tuple[float, float] | None = None
 
     # ── Public API ────────────────────────────────────────────────────────────
