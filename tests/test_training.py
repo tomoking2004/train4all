@@ -132,6 +132,28 @@ def test_a_phase_passed_to_test_means_what_it_means_everywhere_else(run_dir):
     assert "report_only" not in metrics, "test() must not force compute_test_metrics on a phase"
 
 
+def test_a_phase_name_that_changes_hands_is_warned_about(trainer, capsys):
+    """train() rejects duplicate names within one schedule; nothing kept successive
+    *calls* apart, so two test sets could concatenate under 'test' in silence."""
+    trainer.train(Phase("train", make_loader(8), training=True))
+    capsys.readouterr()
+
+    trainer.test(make_loader(8))       # both shorthands name their phase "test",
+    trainer.test(make_loader(12))      # but they are not the same test set
+    assert "already ran in this run as a different phase" in capsys.readouterr().out
+
+
+def test_re_running_the_very_same_phase_is_silent(trainer, capsys):
+    """The same phase, run again — a series continued, not a name stolen."""
+    loader = make_loader(8)
+    trainer.train(Phase("train", make_loader(8), training=True))
+    capsys.readouterr()
+
+    trainer.test(loader)               # e.g. the same test set under two checkpoints
+    trainer.test(loader)
+    assert "already ran in this run" not in capsys.readouterr().out
+
+
 def test_the_step_cache_bridges_loss_and_metrics(trainer):
     """compute_metrics reads the logits compute_loss stashed — no second forward."""
     trainer.train(Phase("train", make_loader(8), training=True))

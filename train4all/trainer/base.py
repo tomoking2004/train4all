@@ -291,6 +291,10 @@ class BaseTrainer(abc.ABC):
         # ── Internal: metrics ─────────────────────────────────────────────────
         self._epoch_metrics: MetricTable = {}
         self._step_metrics: MetricTable = {}
+        # Which phase each recorded name currently stands for — the metric tables
+        # are keyed by name alone, so this is what lets a name be caught changing
+        # hands (see ``_bind_phase_name``).
+        self._phase_bindings: dict[str, Phase] = {}
 
         # ── Internal: misc state ──────────────────────────────────────────────
         self._setup_done: bool = False
@@ -1437,6 +1441,8 @@ class BaseTrainer(abc.ABC):
         """Clear all recorded epoch and step metrics."""
         self._epoch_metrics.clear()
         self._step_metrics.clear()
+        # The bindings only describe what those tables hold, so they go with them.
+        self._phase_bindings.clear()
 
     def save_epoch_metric_plots(
         self,
@@ -1765,6 +1771,7 @@ class BaseTrainer(abc.ABC):
     # ── Internal: Training Loop ───────────────────────────────────────────────
 
     def _execute_phase(self, phase: Phase, epoch: int | None = None) -> dict[str, float]:
+        self._bind_phase_name(phase)
         self.clear_cache()
         self._set_training_mode(phase.training)
         self.on_phase_start(epoch, phase)
@@ -2030,6 +2037,30 @@ class BaseTrainer(abc.ABC):
         self.on_set_training_mode(training)
 
     # ── Internal: Phases ──────────────────────────────────────────────────────
+
+    def _bind_phase_name(self, phase: Phase) -> None:
+        """Bind ``phase.name`` to *phase*, warning when the name meant another one.
+
+        A phase name is a metric series — the tables, the plots, the exports, and
+        ``monitor_phase`` are all keyed by it and nothing else. :meth:`_validate_phases`
+        keeps one *schedule's* names apart, but nothing keeps successive *calls* apart,
+        and two phases sharing a name concatenate into one series in silence. Every
+        entry point runs its phase through here, so this is the one place a name can be
+        caught changing hands.
+
+        A warning rather than an error, in the same spirit as ``_validate_phases``:
+        rebinding is exactly how a curriculum continues one series across successive
+        loaders, and no rule can tell that from a collision. Only silence is wrong.
+        """
+        previous = self._phase_bindings.get(phase.name)
+        if previous is not None and previous != phase:
+            self.print(
+                f"Phase {phase.name!r} already ran in this run as a different phase; its "
+                "metrics append to the same series. Rename one of them if they measure "
+                "different things.",
+                level="warn",
+            )
+        self._phase_bindings[phase.name] = phase
 
     def _validate_phases(self, phases: tuple[Phase, ...]) -> None:
         """Reject a schedule that cannot mean what it says, and warn about the

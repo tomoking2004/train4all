@@ -260,6 +260,8 @@ An epoch is a sequence of **phases**, and `train()` takes that sequence directly
 | `every` | `1` | Run only on epochs divisible by this, so an expensive measurement need not be paid every epoch. |
 | `record_steps` | `None` | Take part in `record_step_metrics`. `None` follows `training`. |
 
+The **name** is load-bearing: a phase name *is* a metric series, and nothing else keys the tables, the plots, or the exports. `train()` rejects a schedule with duplicate names outright; across separate calls the trainer cannot tell a collision from a curriculum deliberately continuing one series on a new loader, so it warns instead — but it never lets a name change hands in silence.
+
 A `Phase` is frozen, and two derived accessors answer the questions its raw fields only imply. The type of a metric function is exported as `MetricFn`, for annotating your own:
 
 ```python
