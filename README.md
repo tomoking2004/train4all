@@ -93,13 +93,18 @@ train4all.__version__    # the installed version
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from torch.utils.data import DataLoader, TensorDataset
+from torch.utils.data import DataLoader, random_split
+from torchvision import datasets, transforms
+
 from train4all import BaseTrainer, Phase
+
+BATCH_SIZE = 256
 
 
 class MyTrainer(BaseTrainer):
     def setup(self):
         self.encoder = nn.Sequential(
+            nn.Flatten(),
             nn.Linear(784, 256), nn.ReLU(),
             nn.Linear(256,  64), nn.ReLU(),
         )
@@ -122,21 +127,30 @@ class MyTrainer(BaseTrainer):
         return {"accuracy": (preds == y).float().mean().item()}
 
 
-def make_loader(n: int, batch_size: int = 64) -> DataLoader:
-    x = torch.randn(n, 784)
-    y = torch.randint(0, 10, (n,))
-    return DataLoader(TensorDataset(x, y), batch_size=batch_size, shuffle=True)
+def make_loader(dataset, shuffle: bool = False) -> DataLoader:
+    return DataLoader(dataset, batch_size=BATCH_SIZE, shuffle=shuffle)
 
 
-trainer = MyTrainer(num_epochs=5, learning_rate=1e-3, run_dir="run", use_dashboard=True)
-trainer.train(
-    Phase("train", make_loader(100_000), training=True),
-    Phase("val", make_loader(20_000)),
+def mnist(train: bool):
+    return datasets.MNIST("data", train=train, download=True, transform=transforms.ToTensor())
+
+
+train_set, val_set = random_split(
+    mnist(train=True), [55_000, 5_000], generator=torch.Generator().manual_seed(0)
 )
-trainer.test(make_loader(10_000), use_best=True)
+
+trainer = MyTrainer(
+    num_epochs=5, batch_size=BATCH_SIZE, learning_rate=1e-3, seed=0,
+    run_dir="run", use_dashboard=True,
+)
+trainer.train(
+    Phase("train", make_loader(train_set, shuffle=True), training=True),
+    Phase("val", make_loader(val_set)),
+)
+trainer.test(make_loader(mnist(train=False)), use_best=True)
 ```
 
-Running it opens the [live dashboard](#live-dashboard) and streams a clean console log — a reproducibility banner (environment, resolved config, model, optimization, status), then a per-phase metric table and automatic checkpoint saves on every epoch:
+Running it opens the [live dashboard](#live-dashboard) and streams a clean console log — a reproducibility banner (environment, resolved config, model, optimization, status), the shape of an epoch, then a per-phase metric table and automatic checkpoint saves on every epoch. This is that run, verbatim:
 
 <div align="center">
   <img alt="train4all console output — reproducibility banner and the first epoch" src="assets/logs.png" width="62%">
