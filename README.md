@@ -89,6 +89,8 @@ train4all.__version__    # the installed version
 
 ## Quick Start
 
+The example trains on MNIST, so it needs `torchvision` as well — `pip install torchvision`. train4all itself never imports it, and so does not depend on it.
+
 ```python
 import torch
 import torch.nn as nn
