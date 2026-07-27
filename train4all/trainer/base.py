@@ -75,9 +75,9 @@ class BaseTrainer(abc.ABC):
     metrics during the final evaluation, or ``get_batch_weight()`` to change how
     per-step metrics are weighted when averaged over an epoch.
 
-    An epoch is whatever sequence of :class:`~train4all.trainer.phase.Phase`
-    objects you hand to :meth:`train` — the loop has no built-in notion of
-    "train" or "val" beyond the names you give them::
+    An epoch is whatever sequence of :class:`~train4all.Phase` objects you hand to
+    :meth:`train` — the loop has no built-in notion of "train" or "val" beyond the
+    names you give them::
 
         trainer.train(
             Phase("train", train_loader, training=True),
@@ -743,10 +743,10 @@ class BaseTrainer(abc.ABC):
             trainer.test(Phase(self._TEST_PHASE, test_loader,
                                metric_fn=self.compute_test_metrics))  # the same
 
-        Pass a :class:`~train4all.trainer.phase.Phase` to say anything the
-        shorthand cannot — most of all a name, since the name is what the metrics,
-        the plots, and the exports are filed under. Two test sets need two names,
-        or their curves silently concatenate under one::
+        Pass a :class:`~train4all.Phase` to say anything the shorthand cannot —
+        most of all a name, since the name is what the metrics, the plots, and the
+        exports are filed under. Two test sets need two names, or their curves
+        silently concatenate under one::
 
             trainer.test(Phase("test_id",  id_loader,  metric_fn=self.compute_test_metrics))
             trainer.test(Phase("test_ood", ood_loader, metric_fn=self.compute_test_metrics))
@@ -1737,7 +1737,7 @@ class BaseTrainer(abc.ABC):
         """Print the current GPU temperature via ``nvidia-smi``; warn above
         :attr:`_GPU_TEMP_WARN_C`.
 
-        The reading itself comes from :func:`~train4all.utils.system.gpu_temperature`;
+        The reading itself comes from :func:`~train4all.utils.gpu_temperature`;
         what is left here is the reporting, which is the trainer's job.
         """
         if not torch.cuda.is_available():
