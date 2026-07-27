@@ -13,6 +13,7 @@ from train4all.utils import (
     get_metric_plot_filename,
     get_metric_plot_title,
     os_name,
+    package_versions,
     print_dict_tree,
     remove_dir,
     replace_dict_keys,
@@ -44,6 +45,22 @@ def test_env_summary_says_so_when_there_is_no_gpu(tmp_path):
     summary = env_summary(tmp_path, gpu_index=None)
     assert summary["GPU"] == "Not available"
     assert summary["VRAM"] == "-"
+
+
+def test_package_versions_reports_what_it_is_asked_for_in_order():
+    versions = package_versions("pytest", "psutil")
+    assert list(versions) == ["pytest", "psutil"]
+    assert all(v[0].isdigit() for v in versions.values())
+
+
+def test_package_versions_leaves_out_what_is_not_installed():
+    assert list(package_versions("psutil", "no-such-distribution")) == ["psutil"]
+
+
+def test_a_summary_grows_by_merging_package_versions(tmp_path):
+    summary = env_summary(tmp_path) | package_versions("pytest")
+    assert list(summary)[-1] == "pytest"   # merged rows close the banner
+    assert summary["PyTorch"] == torch.__version__
 
 
 def test_cuda_index_of_a_cpu_device_is_zero():

@@ -664,6 +664,17 @@ trainer.print_dict_tree(env, header="🖥️  Environment")
 
 The schedule is *not* in `config.json`: [phases](#phases) are arguments to `train()`, not to the constructor, so `from_config` could not pass them back. The file holds what reconstructs the trainer; the shape of an epoch is reported where the run reports everything else.
 
+The environment summary stops where a *training framework's* knowledge stops — the machine, the Python runtime, the PyTorch stack. Which libraries (or dataset revisions, or commits) your result actually depends on is a property of your project, so a run declares them the same way it declares [config entries](#configuration) and [checkpoint extras](#persisting-custom-state-extras-vs-hooks) — by adding them:
+
+```python
+from train4all.utils import package_versions
+
+trainer.update_env_summary(package_versions("timm", "transformers", "scikit-learn"))
+trainer.update_env_summary({"commit": git_sha(), "dataset": DATA_REVISION})
+```
+
+`package_versions` takes distribution names as on PyPI (`scikit-learn`, not `sklearn`) and leaves out what is not installed, so one list is safe across machines. Added rows close the banner in the order declared, a key that collides with a computed row replaces it, and both the printed banner and the dashboard's Environment panel read from `get_env_summary()` — so an entry added once appears in both. Add them before `train()`: the banner is printed at the start of the run, ahead of `setup()`.
+
 ---
 
 ### Configuration
@@ -806,7 +817,8 @@ Machine introspection lives in `train4all.utils.system` — the trainer delegate
 
 | Name | Description |
 | :-- | :-- |
-| `env_summary` | The reproducibility banner as a dict — OS, CPU, RAM, disk, GPU, CUDA, Python, PyTorch. Behind [`get_env_summary()`](#state-inspection). |
+| `env_summary` | The reproducibility banner as a dict — OS, CPU, RAM, disk, GPU, CUDA, Python, and the PyTorch stack. Behind [`get_env_summary()`](#state-inspection). |
+| `package_versions` | Installed versions of the named distributions, skipping what is absent — the dict [`update_env_summary()`](#state-inspection) merges to put project libraries in the banner. |
 | `os_name` | Distro on Linux, `macOS <ver>` on Darwin — not the kernel release. |
 | `cpu_name` | CPU model, from the registry / `sysctl` / `/proc/cpuinfo` rather than the bare architecture. |
 | `cuda_index` | The CUDA device index a `torch.device` resolves to. |

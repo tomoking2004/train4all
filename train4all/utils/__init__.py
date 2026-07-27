@@ -23,6 +23,7 @@ from train4all.utils.system import (
     env_summary,
     gpu_temperature,
     os_name,
+    package_versions,
 )
 
 __all__ = [
@@ -45,6 +46,7 @@ __all__ = [
     "get_metric_plot_title",
     "gpu_temperature",
     "os_name",
+    "package_versions",
     "print_dict_tree",
     "remove_dir",
     "replace_dict_keys",

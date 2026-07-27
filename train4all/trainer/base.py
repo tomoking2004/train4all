@@ -301,6 +301,7 @@ class BaseTrainer(abc.ABC):
         self._cache: dict[str, Any] = {}
         self._ckpt_excludes: set[str] = set()
         self._ckpt_extras: dict[str, Any] = {}
+        self._env_extras: dict[str, Any] = {}
         self._last_dash_write: float = 0.0
 
         # ── Internal: GPU-memory probe ────────────────────────────────────────
@@ -896,8 +897,8 @@ class BaseTrainer(abc.ABC):
         progress (:meth:`reset_training_state`), metrics (:meth:`clear_metrics`),
         and the step cache (:meth:`clear_cache`) — then rewinds the
         reproducibility sources that do not reset on their own, so a subsequent
-        ``train()`` faithfully repeats the first. User-set checkpoint extras are
-        configuration, not training state, and are kept.
+        ``train()`` faithfully repeats the first. User-set checkpoint and
+        environment extras are configuration, not training state, and are kept.
         """
         self.clear_setup()
         self.reset_training_state()
@@ -1549,11 +1550,37 @@ class BaseTrainer(abc.ABC):
     # ── Logging & Display ─────────────────────────────────────────────────────
 
     def get_env_summary(self) -> dict[str, Any]:
-        """Return the system and runtime environment summary as a dict."""
+        """Return the system and runtime environment summary as a dict.
+
+        :func:`~train4all.utils.env_summary` for this run's machine, followed by
+        whatever :meth:`update_env_summary` added.
+        """
         return env_summary(
             self.run_dir,
             gpu_index=self._cuda_index if torch.cuda.is_available() else None,
-        )
+        ) | self._env_extras
+
+    def update_env_summary(self, entries: dict[str, Any]) -> None:
+        """
+        Add or overwrite entries in the environment summary.
+
+        What a framework can report on its own ends at the PyTorch stack; which
+        further libraries — or dataset revisions, or commits — a result depends on
+        is the project's own to declare::
+
+            trainer.update_env_summary(package_versions("timm", "transformers"))
+            trainer.update_env_summary({"commit": git_sha()})
+
+        Declared entries close the summary, in insertion order, and reach both the
+        printed banner and the dashboard's Environment panel. Call this before
+        :meth:`train`: the banner is printed at the start of the run, ahead of
+        ``setup()``.
+
+        Args:
+            entries: Key-value pairs to merge into the summary. A key that
+                collides with a computed row replaces it.
+        """
+        self._env_extras.update(entries)
 
     def print_env_summary(self) -> None:
         """Print a system and runtime environment summary for experiment reproducibility."""

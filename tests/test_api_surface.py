@@ -9,6 +9,7 @@ import torch
 from conftest import TinyTrainer, make_loader
 
 from train4all import Checkpoint, Phase
+from train4all.utils import package_versions
 
 # ── Model management ──────────────────────────────────────────────────────────
 
@@ -167,6 +168,29 @@ def test_a_custom_loop_can_be_assembled_from_the_blocks(run_dir):
 
     assert trainer.get_latest_checkpoint_path().exists()
     assert len(trainer.get_epoch_metrics()["loss"]["val"]) == 2
+
+
+# ── Environment summary ───────────────────────────────────────────────────────
+
+
+def test_update_env_summary_adds_rows_in_the_order_declared(trainer):
+    trainer.update_env_summary(package_versions("pytest"))
+    trainer.update_env_summary({"commit": "abc1234"})
+
+    summary = trainer.get_env_summary()
+    assert list(summary)[-2:] == ["pytest", "commit"]
+    assert summary["OS"]                       # the computed rows keep their place
+
+
+def test_update_env_summary_can_replace_a_computed_row(trainer):
+    trainer.update_env_summary({"GPU": "A100 (shared)"})
+    assert trainer.get_env_summary()["GPU"] == "A100 (shared)"
+
+
+def test_env_entries_are_configuration_and_survive_a_reset(trainer):
+    trainer.update_env_summary({"commit": "abc1234"})
+    trainer.reset_trainer()
+    assert trainer.get_env_summary()["commit"] == "abc1234"
 
 
 # ── GPU utilities ─────────────────────────────────────────────────────────────

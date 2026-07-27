@@ -30,10 +30,11 @@ __all__ = [
     "env_summary",
     "gpu_temperature",
     "os_name",
+    "package_versions",
 ]
 
 
-# ── Host ──────────────────────────────────────────────────────────────────────
+# ── Host & runtime ────────────────────────────────────────────────────────────
 
 def os_name() -> str:
     """Human-readable OS name and version.
@@ -81,8 +82,34 @@ def cpu_name() -> str:
     return platform.processor() or platform.machine() or "Unknown"
 
 
+def package_versions(*names: str) -> dict[str, str]:
+    """
+    Installed versions of the named distributions, in the order given.
+
+    A dict, so it merges into a summary rather than having to be built into one::
+
+        summary = env_summary(run_dir) | package_versions("timm", "transformers")
+
+    Args:
+        names: Distribution names as on PyPI — ``scikit-learn`` rather than the
+            import name ``sklearn``. One that is not installed is left out, so a
+            single list is safe to ask for across machines.
+
+    Returns:
+        Mapping of distribution name to version string.
+    """
+    versions: dict[str, str] = {}
+    for name in names:
+        with contextlib.suppress(importlib.metadata.PackageNotFoundError):
+            versions[name] = importlib.metadata.version(name)
+    return versions
+
+
 def env_summary(disk_path: Path | str, gpu_index: int | None = None) -> dict[str, Any]:
     """The system and runtime summary printed as a run's reproducibility banner.
+
+    The machine, the Python runtime, and the PyTorch stack. Anything else a result
+    depends on is merged on top by the caller (see :func:`package_versions`).
 
     Args:
         disk_path: Path whose filesystem the free/total disk figures describe.
@@ -109,10 +136,7 @@ def env_summary(disk_path: Path | str, gpu_index: int | None = None) -> dict[str
         result |= {"GPU": "Not available", "VRAM": "-", "CUDA": "-", "cuDNN": "-"}
     result["Python"]  = platform.python_version()
     result["PyTorch"] = torch.__version__
-    for pkg in ("torchvision", "torchaudio"):
-        with contextlib.suppress(importlib.metadata.PackageNotFoundError):
-            result[pkg] = importlib.metadata.version(pkg)
-    return result
+    return result | package_versions("torchvision", "torchaudio")
 
 
 # ── GPU ───────────────────────────────────────────────────────────────────────
