@@ -418,7 +418,7 @@ class BaseTrainer(abc.ABC):
         """
         Compute evaluation metrics for the final test phase.
 
-        The metric function ``test(loader)`` gives the phase that shorthand builds.
+        The metric function the ``test(loader)`` shorthand gives the phase it builds.
         Final evaluation runs once, so it can afford heavier, report-only metrics
         (AUC, per-class F1, calibration, confusion matrices, …) that would be
         wasteful every epoch. The default delegates to ``compute_metrics``, so test

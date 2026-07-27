@@ -250,7 +250,7 @@ def compute_metrics(self, batch: Any) -> dict[str, float]:
 
 #### Optional: test-only metrics
 
-The final evaluation runs once, so it can afford heavier, report-only metrics that would be wasteful every epoch. `compute_test_metrics` is the metric function `test(loader)` gives the phase that shorthand builds; the default delegates to `compute_metrics`, so test mirrors validation until you override it:
+The final evaluation runs once, so it can afford heavier, report-only metrics that would be wasteful every epoch. `compute_test_metrics` is the metric function the `test(loader)` shorthand gives the phase it builds; the default delegates to `compute_metrics`, so test mirrors validation until you override it:
 
 ```python
 def compute_test_metrics(self, batch: Any) -> dict[str, float]:
