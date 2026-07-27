@@ -97,7 +97,8 @@ def print_dict_tree(
     trailing_newline: bool = True,
     print_fn: Printer | None = None,
 ) -> None:
-    """Pretty-print a (possibly nested) mapping as a tree.
+    """
+    Pretty-print a (possibly nested) mapping as a tree.
 
     Args:
         tree: Mapping to display; nested mappings are expanded recursively.

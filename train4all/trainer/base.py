@@ -356,8 +356,7 @@ class BaseTrainer(abc.ABC):
 
     @abc.abstractmethod
     def setup(self) -> None:
-        """
-        Initialize and register models, optimizers, and schedulers.
+        """Initialize and register models, optimizers, and schedulers.
 
         Called once before training or evaluation begins. Use
         ``set_models()``, ``set_optimizer()``, and ``set_scheduler()`` here.
@@ -492,8 +491,7 @@ class BaseTrainer(abc.ABC):
         """
 
     def on_after_backward(self) -> None:
-        """
-        Called immediately after ``loss.backward()``, before gradient unscaling
+        """Called immediately after ``loss.backward()``, before gradient unscaling
         and clipping.
 
         Under fp16 AMP the gradients are still scaled by the loss-scale factor
@@ -502,8 +500,7 @@ class BaseTrainer(abc.ABC):
         """
 
     def on_before_optimizer_step(self) -> None:
-        """
-        Called after backward (and gradient unscaling/clipping) and immediately
+        """Called after backward (and gradient unscaling/clipping) and immediately
         before the optimizer step, while gradients are populated.
 
         Useful for gradient inspection, logging gradient norms, or applying a
@@ -842,8 +839,7 @@ class BaseTrainer(abc.ABC):
     # ── Setup & State ─────────────────────────────────────────────────────────
 
     def prepare_training(self) -> None:
-        """
-        Prepare the trainer for a new run.
+        """Prepare the trainer for a new run.
 
         When not resuming, first resets the in-memory state (see
         :meth:`reset_trainer`) and clears any previous run artifacts (see
@@ -878,8 +874,7 @@ class BaseTrainer(abc.ABC):
             self._setup_done = True
 
     def clear_setup(self) -> None:
-        """
-        Discard all resources created by ``setup()``.
+        """Discard all resources created by ``setup()``.
 
         Clears models, optimizer, and scheduler, and marks setup as
         incomplete so the next call to ``ensure_setup()`` rebuilds them.
@@ -890,8 +885,7 @@ class BaseTrainer(abc.ABC):
         self._setup_done = False
 
     def reset_trainer(self) -> None:
-        """
-        Reset the trainer to its freshly constructed state.
+        """Reset the trainer to its freshly constructed state.
 
         Composes the individual resets — setup (:meth:`clear_setup`), training
         progress (:meth:`reset_training_state`), metrics (:meth:`clear_metrics`),
@@ -910,8 +904,7 @@ class BaseTrainer(abc.ABC):
         self.reset_scaler()
 
     def reset_seed(self) -> None:
-        """
-        Apply the configured ``seed`` to the Python, NumPy, and Torch RNGs.
+        """Apply the configured ``seed`` to the Python, NumPy, and Torch RNGs.
 
         Called from ``__init__`` to seed the first run and from
         :meth:`reset_trainer` to rewind every RNG to that same state, so a
@@ -933,8 +926,7 @@ class BaseTrainer(abc.ABC):
             torch.mps.manual_seed(seed)
 
     def reset_scaler(self) -> None:
-        """
-        Re-initialize the AMP ``GradScaler``, preserving whether it is enabled.
+        """Re-initialize the AMP ``GradScaler``, preserving whether it is enabled.
 
         Its fp16 loss scale adapts during training; rebuilding discards that
         adaptation so a fresh run starts from the construction-time scale. (bf16
@@ -943,8 +935,7 @@ class BaseTrainer(abc.ABC):
         self._scaler = torch.amp.GradScaler(enabled=self._scaler.is_enabled())
 
     def clear_artifacts(self) -> None:
-        """
-        Delete this run's checkpoints, metrics, plots, and dashboard files from
+        """Delete this run's checkpoints, metrics, plots, and dashboard files from
         ``run_dir``.
 
         Removes only the trainer-owned artifacts — ``config.json``, the log, and
@@ -1318,8 +1309,7 @@ class BaseTrainer(abc.ABC):
         self._ckpt_extras.update(extras)
 
     def get_checkpoint_extras(self) -> dict[str, Any]:
-        """
-        Return a copy of the checkpoint ``extras`` dict.
+        """Return a copy of the checkpoint ``extras`` dict.
 
         Mirrors :meth:`update_checkpoint_extras`. After any checkpoint is loaded
         (full or weights-only), this reflects the restored extras, so it is the
@@ -1625,8 +1615,8 @@ class BaseTrainer(abc.ABC):
 
     @staticmethod
     def get_schedule_summary(*phases: Phase) -> dict[str, str]:
-        """Return the shape of one epoch as a dict: each phase name mapped to how
-        it runs.
+        """
+        Return the shape of one epoch as a dict: each phase name mapped to how it runs.
 
         The schedule is an argument to ``train()``, not trainer state, so it is
         not part of ``config.json`` — that file holds constructor arguments and

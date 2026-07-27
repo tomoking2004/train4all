@@ -106,7 +106,8 @@ def package_versions(*names: str) -> dict[str, str]:
 
 
 def env_summary(disk_path: Path | str, gpu_index: int | None = None) -> dict[str, Any]:
-    """The system and runtime summary printed as a run's reproducibility banner.
+    """
+    The system and runtime summary printed as a run's reproducibility banner.
 
     The machine, the Python runtime, and the PyTorch stack. Anything else a result
     depends on is merged on top by the caller (see :func:`package_versions`).
@@ -149,7 +150,8 @@ def cuda_index(device: torch.device) -> int:
 
 
 def gpu_temperature(index: int) -> int | None:
-    """Current GPU temperature in °C via ``nvidia-smi``.
+    """
+    Current GPU temperature in °C via ``nvidia-smi``.
 
     Returns ``None`` when the tool answers with something that is not a number.
     The caller decides how to report a failure, so the errors propagate.
@@ -179,7 +181,8 @@ def empty_cuda_cache() -> None:
 
 
 class GpuProbe:
-    """Cached GPU-memory readings for one CUDA device.
+    """
+    Cached GPU-memory readings for one CUDA device.
 
     NVML is initialized once and its device handle reused on every later call, so
     querying memory inside a per-step progress bar costs a single cheap lookup

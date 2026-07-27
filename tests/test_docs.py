@@ -1,10 +1,12 @@
-"""The README's own structure — links, contents, heading ladder.
+"""The documentation as an object — the README's structure, the docstrings' shape.
 
-`test_public_api` checks that the README *mentions* every public name. This checks
-that the document itself holds together: a link to a heading that was renamed, or a
-new section missing from the Contents, is exactly the rot nobody notices by reading.
+`test_public_api` checks that the README *mentions* every public name. This checks that
+the documents hold together in themselves: a link to a heading that was renamed, a new
+section missing from the Contents, a docstring opened against the house style — exactly
+the rot nobody notices by reading.
 """
 
+import ast
 import pathlib
 import re
 import tomllib
@@ -110,3 +112,61 @@ def test_the_pytorch_badge_matches_the_torch_dependency():
     torch = next(d for d in project_metadata()["dependencies"] if d.startswith("torch"))
     minimum = torch.split(">=")[1]
     assert f"pytorch-%E2%89%A5{minimum}-" in README, f"the PyTorch badge does not say ≥{minimum}"
+
+
+# ── Docstrings ────────────────────────────────────────────────────────────────
+# Two openings coexist in this project, and the choice between them is not free:
+# `"""Summary…` while the docstring is one unbroken run of prose, `"""` alone on its line
+# once that summary is merely the first of several parts. Nothing but habit had held the
+# distinction across every docstring here, and habit is what a newcomer cannot read.
+
+DEFINITION = (ast.Module, ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)
+SECTION = re.compile(r"^[ \t]*(?:Args|Attributes|Raises|Returns|Yields):[ \t]*$", re.M)
+BULLET = re.compile(r"^[ \t]*[-*][ \t]", re.M)
+HEADING_RULE = re.compile(r"^[ \t]*─{3,}[ \t]*$", re.M)
+
+
+def docstring_literal(node: ast.AST) -> ast.Constant | None:
+    """The string a definition opens with, or None when it opens with something else."""
+    if not isinstance(node, DEFINITION) or not node.body:
+        return None
+    first = node.body[0]
+    if not isinstance(first, ast.Expr) or not isinstance(first.value, ast.Constant):
+        return None
+    return first.value if isinstance(first.value.value, str) else None
+
+
+def carries_structure(text: str) -> bool:
+    """Whether a docstring holds more than prose: a section block, a bullet, a ruled heading."""
+    return bool(SECTION.search(text) or BULLET.search(text) or HEADING_RULE.search(text))
+
+
+def docstrings() -> list[tuple[str, bool, bool]]:
+    """(location, opens on its own line, carries structure) for every docstring in the project."""
+    found: list[tuple[str, bool, bool]] = []
+    for path in sorted(p for d in ("train4all", "tests") for p in (ROOT / d).rglob("*.py")):
+        source = path.read_text(encoding="utf-8")
+        for node in ast.walk(ast.parse(source)):
+            if (literal := docstring_literal(node)) is None:
+                continue
+            raw = ast.get_source_segment(source, literal) or ""
+            after_quotes = raw.partition('"""')[2] or raw.partition("'''")[2]
+            found.append((
+                f"{path.relative_to(ROOT).as_posix()}:{literal.lineno}",
+                after_quotes.startswith("\n"),
+                carries_structure(literal.value),
+            ))
+    return found
+
+
+@pytest.mark.parametrize(("location", "own_line", "structured"), docstrings())
+def test_every_docstring_opens_the_way_its_shape_asks(location, own_line, structured):
+    if structured:
+        assert own_line, (
+            f"{location}: a section block, a bullet list, or a ruled heading leaves the summary "
+            f'one part among several — drop it below the opening """'
+        )
+    else:
+        assert not own_line, (
+            f'{location}: unbroken prose runs on from its summary — keep it on the opening """'
+        )

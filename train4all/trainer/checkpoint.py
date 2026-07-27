@@ -105,8 +105,7 @@ class Checkpoint:
         training_state: dict[str, Any] | None = None,
         metrics: dict[str, MetricTable] | None = None,
     ) -> Self:
-        """
-        Assemble a checkpoint, ready to :meth:`save`.
+        """Assemble a checkpoint, ready to :meth:`save`.
 
         A weights-only checkpoint carries just ``models`` and ``extras``; a full
         checkpoint adds optimizer, scheduler, scaler, training state, and metrics.
@@ -180,8 +179,7 @@ class Checkpoint:
 
     @property
     def training_state(self) -> dict[str, Any]:
-        """
-        Resume state: ``current_epoch``, ``best_metric``, ``best_epoch``, and
+        """Resume state: ``current_epoch``, ``best_metric``, ``best_epoch``, and
         ``epochs_no_improve``.
 
         Legacy key names (``best_val_loss`` / ``best_val_epoch`` from older files)
@@ -245,7 +243,8 @@ class Checkpoint:
     def print_summary(
         self, *, key_width: int = DEFAULT_KEY_WIDTH, print_fn: Printer | None = None,
     ) -> None:
-        """Pretty-print :meth:`summary` as a tree.
+        """
+        Pretty-print :meth:`summary` as a tree.
 
         Args:
             key_width: Column width for leaf keys.

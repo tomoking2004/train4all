@@ -123,7 +123,8 @@ def _json_safe(value: Any) -> Any:
 
 @dataclass
 class DashboardConfig:
-    """Appearance and behaviour settings for the live training dashboard.
+    """
+    Appearance and behaviour settings for the live training dashboard.
 
     All fields carry sensible defaults; specify only what you need to change.
     Whether there is a dashboard at all is not settled here — that is the
@@ -156,7 +157,8 @@ class DashboardConfig:
 
 @dataclass(frozen=True, slots=True)
 class PhaseSpec:
-    """One phase of an epoch, as the dashboard needs to see it.
+    """
+    One phase of an epoch, as the dashboard needs to see it.
 
     The flat, serializable projection of a trainer phase: the dashboard renders
     a schedule, not a training loop, so it takes the shape (name, gradients,
@@ -186,7 +188,8 @@ class PhaseSpec:
 # ── Dashboard ─────────────────────────────────────────────────────────────────
 
 class Dashboard:
-    """Live training dashboard backed by a JSON data file.
+    """
+    Live training dashboard backed by a JSON data file.
 
     Write the HTML shell once with :meth:`initialize`, then call :meth:`update`
     on every step or epoch to overwrite the small JSON data file. Browser-side
@@ -269,7 +272,8 @@ class Dashboard:
         monitor: str = "loss",
         monitor_phase: str = "val",
     ) -> None:
-        """Write the HTML shell and the first JSON snapshot.
+        """
+        Write the HTML shell and the first JSON snapshot.
 
         Must be called exactly once before any :meth:`update` or
         :meth:`finalize` call. Optionally starts an HTTP server and opens the
@@ -325,7 +329,8 @@ class Dashboard:
         self._start_keepalive()
 
     def mark_started(self, dt: datetime | None = None) -> None:
-        """Reset the elapsed-time origin used by :attr:`elapsed`.
+        """
+        Reset the elapsed-time origin used by :attr:`elapsed`.
 
         Args:
             dt: New start time. Defaults to the current wall-clock time.
@@ -349,7 +354,8 @@ class Dashboard:
         learning_rate: float | list[float] | None = None,
         gpu_mem: tuple[float, float] | None = None,
     ) -> None:
-        """Overwrite the JSON data file with the latest training state.
+        """
+        Overwrite the JSON data file with the latest training state.
 
         Call after each step for step-level granularity, or after each epoch
         for epoch-level updates. A keepalive thread refreshes the timestamp
@@ -424,7 +430,8 @@ class Dashboard:
         *,
         epochs_no_improve: int = 0,
     ) -> None:
-        """Write the final JSON snapshot and embed all data inline in the HTML.
+        """
+        Write the final JSON snapshot and embed all data inline in the HTML.
 
         Stops the keepalive thread, sets the training status to
         ``"completed"``, writes one last JSON update, then inlines all data
