@@ -8,5 +8,6 @@
 .ruff_cache/
 __pycache__/
 build/
+data/
 dist/
 run/
