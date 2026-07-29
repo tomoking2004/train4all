@@ -2,6 +2,7 @@
 
 # train4all
 
+[![CI](https://github.com/tomoking2004/train4all/actions/workflows/ci.yml/badge.svg)](https://github.com/tomoking2004/train4all/actions/workflows/ci.yml)
 ![Python](https://img.shields.io/badge/python-%E2%89%A53.12-blue)
 ![PyTorch](https://img.shields.io/badge/pytorch-%E2%89%A52.0-orange)
 ![License](https://img.shields.io/badge/license-MIT-green)
@@ -862,6 +863,8 @@ pip install -e ".[dev]"
 | `ruff check` | Lint. |
 
 Coverage is a property of the *whole* suite, so its floor is enforced only when the whole suite runs — `pytest tests/test_phase.py` stays a fast, focused loop rather than a failure that says nothing about the code under test.
+
+Both commands run in CI on every push and pull request, once per Python version this package claims to support. That matrix is not a second list to keep in step by hand: `tests/test_docs.py` holds it equal to pyproject's classifiers, so a version promised in the metadata cannot go untested.
 
 The suite also holds this README to the code: every exported name, constructor argument, class constant, and dashboard setting must appear here, or `tests/test_public_api.py` fails. The API reference above cannot quietly fall behind the thing it describes.
 

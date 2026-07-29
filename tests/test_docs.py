@@ -1,9 +1,11 @@
-"""The documentation as an object — the README's structure, the docstrings' shape.
+"""What the project says about itself — the README's structure, the docstrings' shape,
+and the facts restated outside pyproject.
 
 `test_public_api` checks that the README *mentions* every public name. This checks that
-the documents hold together in themselves: a link to a heading that was renamed, a new
-section missing from the Contents, a docstring opened against the house style — exactly
-the rot nobody notices by reading.
+those statements hold together: a link to a heading that was renamed, a new section
+missing from the Contents, a docstring opened against the house style, a badge or a CI
+matrix still repeating a fact pyproject has since changed — exactly the rot nobody
+notices by reading.
 """
 
 import ast
@@ -112,6 +114,30 @@ def test_the_pytorch_badge_matches_the_torch_dependency():
     torch = next(d for d in project_metadata()["dependencies"] if d.startswith("torch"))
     minimum = torch.split(">=")[1]
     assert f"pytorch-%E2%89%A5{minimum}-" in README, f"the PyTorch badge does not say ≥{minimum}"
+
+
+# ── CI ────────────────────────────────────────────────────────────────────────
+# The workflow's matrix is the same kind of hand-written copy as the badges above: the
+# classifiers promise which Python versions this package runs on, and the matrix is what
+# would find out. A version added to one and not the other makes the promise untested.
+
+PYTHON_CLASSIFIER = "Programming Language :: Python :: "
+
+
+def test_the_ci_matrix_matches_the_python_classifiers():
+    workflow = (ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
+    matrix = re.search(r"python-version: \[(.*)\]", workflow)
+    assert matrix, "the CI workflow declares no python-version matrix"
+
+    tested = {v.strip().strip('"') for v in matrix.group(1).split(",")}
+    classified = {
+        c.removeprefix(PYTHON_CLASSIFIER)
+        for c in project_metadata()["classifiers"]
+        if c.startswith(PYTHON_CLASSIFIER)
+    }
+    # `:: 3` names the family, not a version anything could be run on.
+    promised = {v for v in classified if "." in v}
+    assert tested == promised, f"CI tests {sorted(tested)} but pyproject promises {sorted(promised)}"
 
 
 # ── Docstrings ────────────────────────────────────────────────────────────────
