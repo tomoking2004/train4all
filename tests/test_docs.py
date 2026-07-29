@@ -104,6 +104,12 @@ def test_the_version_badge_matches_pyproject():
     assert f"version-{version}-" in README, f"the version badge does not say {version}"
 
 
+def test_the_pinned_install_example_matches_pyproject():
+    """The badge is not the only place a version is written out by hand."""
+    version = project_metadata()["version"]
+    assert f"@v{version}\n" in README, f"the pinned install example does not say v{version}"
+
+
 def test_the_python_badge_matches_requires_python():
     minimum = project_metadata()["requires-python"].lstrip(">=")
     # %E2%89%A5 is the "≥" the shield renders.

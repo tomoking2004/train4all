@@ -87,6 +87,12 @@ import train4all
 train4all.__version__    # the installed version
 ```
 
+That tracks `main`. Every version is tagged and carries [release notes](https://github.com/tomoking2004/train4all/releases) describing what changed and why; append a tag to pin one:
+
+```bash
+pip install git+https://github.com/tomoking2004/train4all.git@v0.10.0
+```
+
 ---
 
 ## Quick Start
