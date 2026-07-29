@@ -1,6 +1,6 @@
 from train4all.utils.dashboard import Dashboard, DashboardConfig, PhaseSpec
 from train4all.utils.dict_utils import MetricTable, replace_dict_keys
-from train4all.utils.file_utils import copy_dir, remove_dir
+from train4all.utils.file_utils import copy_dir, remove_dir, write_json
 from train4all.utils.log_utils import (
     DEFAULT_KEY_WIDTH,
     LogLevel,
@@ -52,4 +52,5 @@ __all__ = [
     "replace_dict_keys",
     "save_curves_plot",
     "separator_rule",
+    "write_json",
 ]

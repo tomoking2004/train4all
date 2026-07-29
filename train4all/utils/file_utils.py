@@ -1,10 +1,14 @@
 import contextlib
+import json
 import shutil
 import stat
 from collections.abc import Callable, Sequence
 from pathlib import Path
+from typing import Any
 
-__all__ = ["copy_dir", "remove_dir"]
+from train4all.utils.log_utils import Printer
+
+__all__ = ["copy_dir", "remove_dir", "write_json"]
 
 
 def _on_remove_error(func: Callable[..., None], path: str, _exc: BaseException) -> None:
@@ -30,6 +34,40 @@ def remove_dir(path: Path | str) -> None:
     target = Path(path)
     if target.exists():
         shutil.rmtree(target, onexc=_on_remove_error)
+
+
+def write_json(
+    path: Path | str,
+    data: Any,
+    *,
+    label: str,
+    print_fn: Printer | None = None,
+) -> bool:
+    """
+    Write *data* to *path* as indented JSON, creating parent directories as needed.
+
+    A failed write is reported and swallowed rather than raised: these files are a
+    run's records, and losing one is not worth losing the run that produced it.
+
+    Args:
+        path: Destination ``.json`` file.
+        data: Any JSON-serializable object.
+        label: What is being written, named in the failure message (e.g. ``"config"``).
+        print_fn: Where a failure is reported. Silent when ``None``.
+
+    Returns:
+        ``True`` when the file was written, ``False`` when the write failed.
+    """
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        with path.open("w", encoding="utf-8") as f:
+            json.dump(data, f, indent=4)
+    except Exception as e:
+        if print_fn is not None:
+            print_fn(f"Failed to write {label}: {e}\n")
+        return False
+    return True
 
 
 def _remove(path: Path) -> None:

@@ -9,7 +9,7 @@ import time
 from collections.abc import Callable, Generator, Iterator
 from contextlib import contextmanager
 from datetime import datetime
-from functools import wraps
+from functools import partial, wraps
 from pathlib import Path
 from types import MappingProxyType
 from typing import Any, Self
@@ -23,6 +23,7 @@ from torch.utils.data import DataLoader
 from tqdm import tqdm
 
 from train4all.trainer.checkpoint import Checkpoint
+from train4all.trainer.metrics import MetricStore
 from train4all.trainer.phase import Phase
 from train4all.utils import (
     DEFAULT_KEY_WIDTH,
@@ -39,13 +40,12 @@ from train4all.utils import (
     empty_cuda_cache,
     env_summary,
     get_metric_plot_filename,
-    get_metric_plot_title,
     gpu_temperature,
     print_dict_tree,
     remove_dir,
     replace_dict_keys,
-    save_curves_plot,
     separator_rule,
+    write_json,
 )
 
 __all__ = ["BaseTrainer"]
@@ -294,8 +294,7 @@ class BaseTrainer(abc.ABC):
         self._cycle_weight: float = 0.0
 
         # ── Internal: metrics ─────────────────────────────────────────────────
-        self._epoch_metrics: MetricTable = {}
-        self._step_metrics: MetricTable = {}
+        self._metrics = MetricStore()
         # Which phase each recorded name currently stands for — the metric tables
         # are keyed by name alone, so this is what lets a name be caught changing
         # hands (see ``_bind_phase_name``).
@@ -1291,11 +1290,11 @@ class BaseTrainer(abc.ABC):
         # pulse the heartbeat between them so a slow one never trips *Offline*.
         self.save_checkpoints()
         self._dash_heartbeat()
-        if self._epoch_metrics:
+        if self._metrics.epoch:
             self.save_epoch_metric_plots(metric_names=metric_names, phase_names=phase_names)
             self.export_epoch_metrics(metric_names=metric_names, phase_names=phase_names)
             self._dash_heartbeat()
-        if self._step_metrics:
+        if self._metrics.step:
             self.save_step_metric_plots(metric_names=metric_names, phase_names=phase_names)
             self.export_step_metrics(metric_names=metric_names, phase_names=phase_names)
             self._dash_heartbeat()
@@ -1530,7 +1529,7 @@ class BaseTrainer(abc.ABC):
 
     def save_config(self) -> None:
         """Serialize the trainer configuration to ``config.json`` in ``run_dir``."""
-        self._write_json(self.get_config_path(), self._config, "config")
+        write_json(self.get_config_path(), self._config, label="config", print_fn=self._warn)
 
     def get_config_path(self) -> Path:
         """Return the path to the config JSON file in ``run_dir``."""
@@ -1553,7 +1552,7 @@ class BaseTrainer(abc.ABC):
         Returns:
             Filtered metric table.
         """
-        return self._filter_metrics(self._epoch_metrics, metric_names=metric_names, phase_names=phase_names)
+        return self._metrics.epoch_table(metric_names, phase_names)
 
     def get_step_metrics(
         self,
@@ -1570,12 +1569,11 @@ class BaseTrainer(abc.ABC):
         Returns:
             Filtered metric table.
         """
-        return self._filter_metrics(self._step_metrics, metric_names=metric_names, phase_names=phase_names)
+        return self._metrics.step_table(metric_names, phase_names)
 
     def clear_metrics(self) -> None:
         """Clear all recorded epoch and step metrics."""
-        self._epoch_metrics.clear()
-        self._step_metrics.clear()
+        self._metrics.clear()
         # The bindings only describe what those tables hold, so they go with them.
         self._phase_bindings.clear()
 
@@ -1591,8 +1589,7 @@ class BaseTrainer(abc.ABC):
             metric_names: Metrics to plot. ``None`` plots all.
             phase_names: Phase names to include. ``None`` includes all.
         """
-        metrics = self.get_epoch_metrics(metric_names=metric_names, phase_names=phase_names)
-        self._save_metric_plots(metrics, xlabel="epoch", split_phases=False)
+        self._metrics.save_epoch_plots(self.get_metric_plot_path, metric_names, phase_names)
         self.print("📈 Epoch-level metric curves saved.")
 
     def save_step_metric_plots(
@@ -1607,13 +1604,9 @@ class BaseTrainer(abc.ABC):
             metric_names: Metrics to plot. ``None`` plots all.
             phase_names: Phase names to include. ``None`` includes all.
         """
-        metrics = self.get_step_metrics(metric_names=metric_names, phase_names=phase_names)
-        self._save_metric_plots(
-            metrics,
-            xlabel="step",
-            title_prefix="step-level",
-            path_prefix="step",
-            split_phases=True,
+        # The plot's own name carries the same "step" the file's does.
+        self._metrics.save_step_plots(
+            partial(self.get_metric_plot_path, prefix="step"), metric_names, phase_names,
         )
         self.print("📈 Step-level metric curves saved.")
 
@@ -1632,9 +1625,9 @@ class BaseTrainer(abc.ABC):
         Returns:
             Path to the written JSON file.
         """
-        metrics = self.get_epoch_metrics(metric_names=metric_names, phase_names=phase_names)
-        path = self.get_epoch_metrics_path()
-        self._export_metrics(metrics, path)
+        path = self._metrics.export_epoch(
+            self.get_epoch_metrics_path(), metric_names, phase_names, print_fn=self._warn,
+        )
         self.print(f"📄 Epoch-level metrics exported: {path.name}")
         return path
 
@@ -1653,9 +1646,9 @@ class BaseTrainer(abc.ABC):
         Returns:
             Path to the written JSON file.
         """
-        metrics = self.get_step_metrics(metric_names=metric_names, phase_names=phase_names)
-        path = self.get_step_metrics_path()
-        self._export_metrics(metrics, path)
+        path = self._metrics.export_step(
+            self.get_step_metrics_path(), metric_names, phase_names, print_fn=self._warn,
+        )
         self.print(f"📄 Step-level metrics exported: {path.name}")
         return path
 
@@ -1789,7 +1782,7 @@ class BaseTrainer(abc.ABC):
                 if self._best_epoch is not None else "-"
             ),
             "Stagnant epochs":    self._epochs_no_improve,
-            "Last epoch metrics": self._format_epoch_metrics() or "-",
+            "Last epoch metrics": self._metrics.latest() or "-",
         }
         self.print_dict_tree(tree, header="📋 Status")
 
@@ -1965,12 +1958,12 @@ class BaseTrainer(abc.ABC):
         for step, batch in enumerate(pbar or phase.loader, 1):
             weight = self.get_batch_weight(batch)
             metrics = self._execute_step(batch, phase, step=step, max_step=max_step, weight=weight)
-            self._accumulate_metrics(accumulated, metrics, weight)
+            self._metrics.accumulate(accumulated, metrics, weight)
             total_weight += weight
             if pbar is not None:
                 self._update_pbar(pbar, metrics)
 
-        return self._average_metrics(accumulated, total_weight)
+        return self._metrics.average(accumulated, total_weight)
 
     def _execute_step(
         self,
@@ -2327,8 +2320,8 @@ class BaseTrainer(abc.ABC):
                 "epochs_no_improve": self._epochs_no_improve,
             },
             metrics={
-                "epoch_metrics": self._epoch_metrics,
-                "step_metrics":  self._step_metrics,
+                "epoch_metrics": self._metrics.epoch,
+                "step_metrics":  self._metrics.step,
             },
         )
         # Subclasses attach custom state to full checkpoints only;
@@ -2399,8 +2392,8 @@ class BaseTrainer(abc.ABC):
             self._epochs_no_improve = ts.get("epochs_no_improve", self._epochs_no_improve)
             loaded["training_state"] = "restored"
 
-            self._epoch_metrics = ckpt.metrics.get("epoch_metrics", self._epoch_metrics)
-            self._step_metrics  = ckpt.metrics.get("step_metrics",  self._step_metrics)
+            self._metrics.epoch = ckpt.metrics.get("epoch_metrics", self._metrics.epoch)
+            self._metrics.step  = ckpt.metrics.get("step_metrics",  self._metrics.step)
             loaded["metrics"] = "restored"
 
             # Let subclasses restore any custom state from the loaded
@@ -2471,108 +2464,21 @@ class BaseTrainer(abc.ABC):
     # ── Internal: Metrics ─────────────────────────────────────────────────────
 
     def _record_epoch_metrics(self, metrics: dict[str, float], phase_name: str) -> None:
-        self._record_metrics(self._epoch_metrics, metrics, phase_name)
+        self._metrics.record_epoch(metrics, phase_name)
 
     def _record_step_metrics(self, metrics: dict[str, float], phase_name: str) -> None:
+        # ``step_metric_names`` is this trainer's setting, so it is applied before
+        # the store is told anything — the store records what it is handed.
         if self.step_metric_names is not None:
             metrics = {k: v for k, v in metrics.items() if k in self.step_metric_names}
-        self._record_metrics(self._step_metrics, metrics, phase_name)
-
-    @staticmethod
-    def _record_metrics(target: MetricTable, metrics: dict[str, float], phase_name: str) -> None:
-        for name, value in metrics.items():
-            target.setdefault(name, {}).setdefault(phase_name, []).append(value)
-
-    @staticmethod
-    def _filter_metrics(
-        metrics: MetricTable,
-        metric_names: list[str] | None = None,
-        phase_names: list[str] | None = None,
-    ) -> MetricTable:
-        result: MetricTable = {}
-        for name, phase_dict in metrics.items():
-            if metric_names is not None and name not in metric_names:
-                continue
-            filtered = {
-                phase_name: values
-                for phase_name, values in phase_dict.items()
-                if (phase_names is None or phase_name in phase_names) and values
-            }
-            if filtered:
-                result[name] = filtered
-        return result
-
-    @staticmethod
-    def _accumulate_metrics(
-        accumulated: dict[str, float],
-        metrics: dict[str, float],
-        weight: float,
-    ) -> None:
-        for name, value in metrics.items():
-            accumulated[name] = accumulated.get(name, 0.0) + value * weight
-
-    @staticmethod
-    def _average_metrics(accumulated: dict[str, float], total_weight: float) -> dict[str, float]:
-        if total_weight == 0:
-            return {}
-        return {k: v / total_weight for k, v in accumulated.items()}
-
-    def _save_metric_plots(
-        self,
-        metrics: MetricTable,
-        xlabel: str,
-        title_prefix: str | None = None,
-        path_prefix: str | None = None,
-        split_phases: bool = False,
-    ) -> None:
-        for metric_name, phase_dict in metrics.items():
-            if all(not v for v in phase_dict.values()):
-                continue
-            if split_phases:
-                for phase_name, values in phase_dict.items():
-                    if not values:
-                        continue
-                    save_curves_plot(
-                        curves={phase_name: values},
-                        path=self.get_metric_plot_path(
-                            metric_name, phase_name=phase_name, prefix=path_prefix,
-                        ),
-                        title=get_metric_plot_title(
-                            metric_name, phase_name=phase_name, prefix=title_prefix,
-                        ),
-                        xlabel=xlabel,
-                        ylabel=metric_name,
-                    )
-            else:
-                save_curves_plot(
-                    curves={p: v for p, v in phase_dict.items() if v},
-                    path=self.get_metric_plot_path(metric_name, prefix=path_prefix),
-                    title=get_metric_plot_title(metric_name, prefix=title_prefix),
-                    xlabel=xlabel,
-                    ylabel=metric_name,
-                )
-
-    def _export_metrics(self, metrics: MetricTable, path: Path | str) -> None:
-        self._write_json(Path(path), metrics, "metrics")
-
-    def _write_json(self, path: Path, data: Any, label: str) -> None:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        try:
-            with path.open("w", encoding="utf-8") as f:
-                json.dump(data, f, indent=4)
-        except Exception as e:
-            self.print(f"Failed to write {label}: {e}\n", level="warn")
-
-    def _format_epoch_metrics(self) -> dict[str, str]:
-        return {
-            metric_name: "  ".join(
-                f"{phase_name}={values[-1]:.4f}" if values else f"{phase_name}=N/A"
-                for phase_name, values in phase_dict.items()
-            ) or "N/A"
-            for metric_name, phase_dict in self._epoch_metrics.items()
-        }
+        self._metrics.record_step(metrics, phase_name)
 
     # ── Internal: Display ─────────────────────────────────────────────────────
+
+    def _warn(self, msg: str) -> None:
+        """A :data:`~train4all.utils.Printer` that warns — what a collaborator is handed
+        when it has something to report but no say in how loudly."""
+        self.print(msg, level="warn")
 
     def _update_pbar(self, pbar: tqdm, metrics: dict[str, float]) -> None:
         display = {
@@ -2642,7 +2548,7 @@ class BaseTrainer(abc.ABC):
         self._dashboard.update(
             self._current_epoch,
             self.num_epochs,
-            self._epoch_metrics,
+            self._metrics.epoch,
             self._best_metric,
             self._best_epoch,
             epochs_no_improve=self._epochs_no_improve,
@@ -2666,7 +2572,7 @@ class BaseTrainer(abc.ABC):
         self._dashboard.finalize(
             self._current_epoch,
             self.num_epochs,
-            self._epoch_metrics,
+            self._metrics.epoch,
             self._best_metric,
             self._best_epoch,
             epochs_no_improve=self._epochs_no_improve,

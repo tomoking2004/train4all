@@ -60,6 +60,7 @@ train4all is a minimal PyTorch training framework. Subclass `BaseTrainer`, imple
       - [Inspecting a checkpoint](#inspecting-a-checkpoint)
     - [Metrics](#metrics)
       - [Weighted averaging](#weighted-averaging)
+      - [Reading a run's metrics](#reading-a-runs-metrics)
     - [Custom Training Loop](#custom-training-loop)
     - [Resetting](#resetting)
     - [State Inspection](#state-inspection)
@@ -597,6 +598,47 @@ def get_batch_weight(self, batch: Any) -> int:
     return int((batch["labels"] != -100).sum())
 ```
 
+#### Reading a run's metrics
+
+`MetricStore` owns the two tables and everything done to them — recording, filtering, the weighted averaging above, JSON export, and the curve plots. The methods listed above are the trainer's verbs for it, so a trainer and a reader never disagree about what a metric table is.
+
+It also reads an exported run back, with **no model, no subclass, and no trainer**:
+
+```python
+from train4all import MetricStore
+
+store = MetricStore.load("run/metrics/epoch_metrics.json")   # step= reads the other file
+store.print_summary()              # tree: each table's metrics, and how many points per phase
+store.summary()                    # the same overview, as a plain dict
+
+store.epoch["loss"]["val"]         # [0.9107, 0.7412, 0.6339, …] — the table itself, not a copy
+store.step                         # the step-level table, empty unless one was loaded
+store.epoch_table(["loss"], ["val"])   # a filtered copy; step_table() likewise
+store.metric_names()               # sorted union of metric names across both tables
+store.latest()                     # {"loss": "train=0.3104  val=0.6339"} — what the banner shows
+store.path                         # the file it was loaded from, or None for a live one
+```
+
+Recording and writing are the same methods the trainer calls, so a [custom loop](#custom-training-loop) can drive one directly:
+
+```python
+from pathlib import Path
+
+store = MetricStore()
+store.record_epoch({"loss": 0.6339}, "val")     # record_step() for the step table
+store.export_epoch("run/metrics/epoch_metrics.json")          # export_step() likewise
+store.save_epoch_plots(lambda metric: Path("run/plots") / f"{metric}.png")
+                                                # save_step_plots() takes (metric, phase_name=)
+store.clear()                                   # drop both tables
+
+# The weighted averaging above, as the two steps a loop needs
+accumulated: dict[str, float] = {}
+MetricStore.accumulate(accumulated, {"loss": 0.7}, weight=32)
+MetricStore.average(accumulated, 32)            # {"loss": 0.7}
+```
+
+Where a file goes is not the store's decision. A run directory's layout belongs to the trainer that owns it, so every method that writes is handed the path — or, for one plot per metric, the function that builds one. That is why `save_epoch_plots` takes a callable rather than a directory, and why the trainer hands it `get_metric_plot_path` from the list above.
+
 ---
 
 ### Custom Training Loop
@@ -826,6 +868,7 @@ from train4all.utils import TrainerLogger, print_dict_tree, remove_dir
 | `save_curves_plot` | Save labelled 1-D curves to a PNG — matplotlib, without pyplot's global state. |
 | `get_metric_plot_title` | Build a plot title from metric name, phase name, and prefix. |
 | `get_metric_plot_filename` | Build a plot filename from the same parts. |
+| `write_json` | Write indented JSON, reporting a failed write through a `print_fn` instead of raising — a run's records are not worth losing the run over. Behind `save_config()` and [`export_epoch_metrics()`](#metrics). |
 | `copy_dir` | Recursive copy with an exclude list — the repeatable, atomic mirror [`snapshot_run()`](#snapshot) is built on. Refuses a destination inside the source. |
 | `remove_dir` | Recursive delete that clears read-only flags first. |
 | `replace_dict_keys` | Rewrite substrings in nested dict keys — what `key_map` uses. |
