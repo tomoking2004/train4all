@@ -8,6 +8,7 @@ shows `checkpoint["ema"] = ...` doing it. None of that had a test.
 import contextlib
 from typing import Any
 
+import pytest
 import torch
 from conftest import TinyTrainer, make_loader
 
@@ -139,14 +140,14 @@ def test_the_cache_is_cleared_before_the_phase_start_hook(run_dir):
 def test_on_exception_fires_and_the_error_is_reraised(run_dir):
     caught: list[BaseException] = []
 
-    class Boom(TinyTrainer):
-        def compute_loss(self, batch):
+    class Interrupted(TinyTrainer):
+        def compute_loss(self, batch: Any) -> torch.Tensor:
             raise KeyboardInterrupt("ctrl-c")
 
         def on_exception(self, exc: BaseException) -> None:
             caught.append(exc)
 
-    trainer = Boom(num_epochs=1, learning_rate=0.1, run_dir=run_dir, use_progress_bar=False)
+    trainer = Interrupted(num_epochs=1, learning_rate=0.1, run_dir=run_dir, use_progress_bar=False)
     try:
         trainer.train(Phase("train", make_loader(4), training=True))
     except KeyboardInterrupt:
@@ -158,14 +159,83 @@ def test_on_exception_fires_and_the_error_is_reraised(run_dir):
     assert isinstance(caught[0], KeyboardInterrupt), "even a KeyboardInterrupt must reach the hook"
 
 
-def test_no_checkpoint_is_written_when_the_loop_aborts(run_dir):
-    class Boom(TinyTrainer):
-        def compute_loss(self, batch):
-            raise RuntimeError("boom")
+class Failing(TinyTrainer):
+    """Dies mid-phase, for the paths that have to survive a run that does."""
 
-    trainer = Boom(num_epochs=1, learning_rate=0.1, run_dir=run_dir, use_progress_bar=False)
+    def compute_loss(self, batch: Any) -> torch.Tensor:
+        raise RuntimeError("boom")
+
+
+def test_no_checkpoint_is_written_when_the_loop_aborts(run_dir):
+    trainer = Failing(num_epochs=1, learning_rate=0.1, run_dir=run_dir, use_progress_bar=False)
     with contextlib.suppress(RuntimeError):
         trainer.train(Phase("train", make_loader(4), training=True))
     assert not trainer.get_latest_checkpoint_path().exists(), (
         "a mid-epoch save would persist an incomplete state"
     )
+
+
+# ── The running phase ─────────────────────────────────────────────────────────
+# What a callback handed no phase — `compute_loss` above all — can still learn
+# about the pass it belongs to.
+
+
+class Watcher(TinyTrainer):
+    """Records the pass each `compute_loss` call turned out to be part of."""
+
+    def setup(self) -> None:
+        super().setup()
+        self.seen: list[tuple[str, bool]] = []
+
+    def compute_loss(self, batch: Any) -> torch.Tensor:
+        self.seen.append((self.current_phase.name, self.training))
+        return super().compute_loss(batch)
+
+
+def test_compute_loss_can_tell_a_training_pass_from_an_evaluation_one(run_dir):
+    trainer = Watcher(num_epochs=1, learning_rate=0.1, run_dir=run_dir, use_progress_bar=False)
+    trainer.train(
+        Phase("train", make_loader(4, batch_size=4), training=True),
+        Phase("val", make_loader(4, batch_size=4)),
+    )
+    assert trainer.seen == [("train", True), ("val", False)]
+
+
+def test_a_standalone_step_marks_its_phase_too(run_dir):
+    """`execute_step` is an entry point of its own, not only the epoch loop's inside."""
+    trainer = Watcher(learning_rate=0.1, run_dir=run_dir, use_progress_bar=False)
+    trainer.ensure_setup()
+    phase = Phase("audit", make_loader(4, batch_size=4))
+
+    trainer.execute_step(next(iter(phase.loader)), phase)
+    assert trainer.seen == [("audit", False)]
+
+
+def test_nothing_is_running_between_passes(run_dir):
+    outside: list[Phase | None] = []
+
+    class Peek(TinyTrainer):
+        def on_train_epoch_end(self, epoch: int) -> None:
+            outside.append(self.current_phase)
+
+    trainer = Peek(num_epochs=1, learning_rate=0.1, run_dir=run_dir, use_progress_bar=False)
+    assert trainer.current_phase is None and trainer.training is False
+
+    trainer.train(Phase("train", make_loader(4), training=True))
+    assert outside == [None], "an epoch is not a pass — the hook runs between them"
+    assert trainer.current_phase is None
+
+
+def test_the_mark_unwinds_when_a_pass_raises(run_dir):
+    trainer = Failing(num_epochs=1, learning_rate=0.1, run_dir=run_dir, use_progress_bar=False)
+    with contextlib.suppress(RuntimeError):
+        trainer.train(Phase("train", make_loader(4), training=True))
+    assert trainer.current_phase is None, "a failed pass left itself marked as running"
+
+
+def test_the_running_phase_is_read_only(trainer):
+    """Assignable state would be a second copy of what the Phase already says."""
+    with pytest.raises(AttributeError):
+        trainer.training = True
+    with pytest.raises(AttributeError):
+        trainer.current_phase = Phase("nope", make_loader(4))

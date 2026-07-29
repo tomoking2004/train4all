@@ -246,6 +246,8 @@ def compute_metrics(self, batch: Any) -> dict[str, float]:
     ...
 ```
 
+Both run for every phase, and neither is told which one. Where a training pass must differ — augmentation, teacher forcing, a heavier loss — branch on [`self.training`](#lifecycle-hooks).
+
 #### Optional: test-only metrics
 
 The final evaluation runs once, so it can afford heavier, report-only metrics that would be wasteful every epoch. `compute_test_metrics` is the metric function the `test(loader)` shorthand gives the phase it builds; the default delegates to `compute_metrics`, so test mirrors validation until you override it:
@@ -437,7 +439,14 @@ def on_save_checkpoint(self, checkpoint: Checkpoint) -> None: ...      # attach 
 def on_load_checkpoint(self, checkpoint: Checkpoint) -> None: ...      # read it back after restore
 ```
 
-The phase and step hooks receive the [`Phase`](#phases) itself, not just its name, so a hook can branch on what the pass actually *is* (`phase.training`, `phase.loader`) rather than on a string.
+The phase and step hooks receive the [`Phase`](#phases) itself, not just its name, so a hook can branch on what the pass actually *is* (`phase.training`, `phase.loader`) rather than on a string. The hooks that receive neither — and `compute_loss`, `compute_metrics`, `get_batch_weight`, which are handed only a batch — read the same fact from the trainer:
+
+```python
+self.current_phase    # the Phase currently running, or None between passes
+self.training         # whether that pass computes gradients; False between passes
+```
+
+Both are read-only views of the running pass rather than a second copy of it: the `Phase` stays the only source of truth and the trainer records merely which one is live, so `self.training` inside `compute_loss` cannot disagree with the `phase.training` its hooks are handed. The mark is scoped to the pass and unwinds when it ends, exceptions included. Note that it describes the **pass**, not the loop — `self.training` is `False` in `on_train_epoch_end`, which runs between passes, while [`is_training_complete()`](#state-inspection) is the question about the run.
 
 A few timing guarantees worth knowing:
 

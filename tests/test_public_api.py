@@ -24,10 +24,13 @@ def documented(name: str) -> bool:
     return re.search(rf"(?<![\w]){re.escape(name)}(?![\w])", README) is not None
 
 
-def public_callables(cls: type) -> list[str]:
+def public_surface(cls: type) -> list[str]:
+    """Every public name a user calls or reads on the class — methods and properties
+    alike, since a property is as public as the method it replaced."""
     return sorted(
         n for n in dir(cls)
-        if not n.startswith("_") and callable(getattr(cls, n, None))
+        if not n.startswith("_")
+        and (callable(attr := getattr(cls, n, None)) or isinstance(attr, property))
     )
 
 
@@ -52,8 +55,8 @@ def test_the_utils_exports_are_documented(name):
     assert documented(name), f"train4all.utils.{name} is exported but absent from the README"
 
 
-@pytest.mark.parametrize("name", public_callables(BaseTrainer))
-def test_the_trainer_methods_are_documented(name):
+@pytest.mark.parametrize("name", public_surface(BaseTrainer))
+def test_the_trainer_surface_is_documented(name):
     assert documented(name), f"BaseTrainer.{name} is public but absent from the README"
 
 

@@ -6,7 +6,8 @@ import random
 import shutil
 import subprocess
 import time
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Generator, Iterator
+from contextlib import contextmanager
 from datetime import datetime
 from functools import wraps
 from pathlib import Path
@@ -281,6 +282,8 @@ class BaseTrainer(abc.ABC):
 
         # ── Internal: training state ──────────────────────────────────────────
         self._current_epoch: int = 0
+        # The pass currently running, or None between passes (see ``_running``).
+        self._current_phase: Phase | None = None
         self._best_metric: float = self._worst_metric()
         self._best_epoch: int | None = None
         self._epochs_no_improve: int = 0
@@ -379,7 +382,9 @@ class BaseTrainer(abc.ABC):
         Compute the scalar loss for a batch.
 
         Intermediate tensors can be cached with ``set_cache()`` for reuse
-        inside ``compute_metrics()``.
+        inside ``compute_metrics()``. Called for every phase, so where the two
+        differ, ``self.training`` tells a gradient pass from an evaluation one and
+        ``self.current_phase`` names the pass exactly.
 
         Args:
             batch: A batch of input data.
@@ -836,6 +841,38 @@ class BaseTrainer(abc.ABC):
         if print_metrics:
             self.print_metrics(metrics, phase.name)
         return metrics
+
+    @property
+    def current_phase(self) -> Phase | None:
+        """The phase currently running, or ``None`` between passes.
+
+        Every pass enters through one place, so this is what a method that is handed
+        no phase — ``compute_loss``, ``compute_metrics``, ``get_batch_weight``, and
+        the hooks that take neither a phase nor a mode — can read to learn what it is
+        part of. The :class:`Phase` remains the only source of truth; the trainer
+        records which one is live and nothing more, so this can never drift from the
+        ``phase`` the surrounding hooks are given.
+
+        Read-only: a pass is marked by whatever runs it. Assigning to it raises.
+        """
+        return self._current_phase
+
+    @property
+    def training(self) -> bool:
+        """Whether the pass currently running computes gradients — the ``training`` of
+        :attr:`current_phase`, and ``False`` between passes.
+
+        The question ``nn.Module.training`` answers, asked of the trainer: it is the
+        *pass* that trains or evaluates, not the epoch, so this says nothing about
+        whether a training loop is in progress (see :meth:`is_training_complete`)::
+
+            def compute_loss(self, batch):
+                x, y = batch
+                if self.training:            # augment the training pass only
+                    x = self.augment(x)
+                return F.cross_entropy(self.net(x), y)
+        """
+        return self._current_phase is not None and self._current_phase.training
 
     # ── Setup & State ─────────────────────────────────────────────────────────
 
@@ -1897,12 +1934,13 @@ class BaseTrainer(abc.ABC):
     def _execute_phase(self, phase: Phase, epoch: int | None = None) -> dict[str, float]:
         self._bind_phase_name(phase)
         self.clear_cache()
-        self._set_training_mode(phase.training)
-        self.on_phase_start(epoch, phase)
-        metrics = self._iterate_phase(phase)
-        self._record_epoch_metrics(metrics, phase.name)
-        self._dash_update()
-        self.on_phase_end(epoch, phase, metrics)
+        with self._running(phase):
+            self._set_training_mode(phase.training)
+            self.on_phase_start(epoch, phase)
+            metrics = self._iterate_phase(phase)
+            self._record_epoch_metrics(metrics, phase.name)
+            self._dash_update()
+            self.on_phase_end(epoch, phase, metrics)
         # NOTE: no per-phase ``empty_cache()`` here — releasing cached blocks
         # back to the driver every phase forces the allocator to re-acquire
         # them next phase, which slows training. A single cleanup runs at the
@@ -1942,26 +1980,29 @@ class BaseTrainer(abc.ABC):
         max_step: int = 0,
         weight: float | None = None,
     ) -> dict[str, float]:
-        batch = self._to_device(batch)
-        self.on_step_start(step, batch, phase)
-        # A training step fires the optimizer update only on the step that closes
-        # an accumulation cycle (every step when accumulation_steps == 1).
-        apply_update = phase.training and self._is_accumulation_boundary(step or 0, max_step)
-        # The per-batch weight drives gradient-accumulation normalization. The
-        # epoch loop already computes it (for metric averaging) and passes it in;
-        # the standalone ``execute_step`` path computes it here on demand.
-        if phase.training and weight is None:
-            weight = self.get_batch_weight(batch)
-        metrics = self._compute_step(batch, phase, weight=weight, apply_update=apply_update)
-        # Throttle intermediate steps, but always write the final step of a
-        # phase so the gauge's inner ring reaches 100% before the phase resets.
-        self._dash_update(
-            step=step or 0, max_step=max_step, step_metrics=metrics, phase=phase,
-            throttle=max_step <= 0 or step != max_step,
-        )
-        if self.record_step_metrics and phase.records_steps:
-            self._record_step_metrics(metrics, phase.name)
-        self.on_step_end(step, batch, metrics, phase)
+        # Marked here as well as in ``_execute_phase``: a step is a pass too, and
+        # ``execute_step`` is a documented entry point of its own.
+        with self._running(phase):
+            batch = self._to_device(batch)
+            self.on_step_start(step, batch, phase)
+            # A training step fires the optimizer update only on the step that closes
+            # an accumulation cycle (every step when accumulation_steps == 1).
+            apply_update = phase.training and self._is_accumulation_boundary(step or 0, max_step)
+            # The per-batch weight drives gradient-accumulation normalization. The
+            # epoch loop already computes it (for metric averaging) and passes it in;
+            # the standalone ``execute_step`` path computes it here on demand.
+            if phase.training and weight is None:
+                weight = self.get_batch_weight(batch)
+            metrics = self._compute_step(batch, phase, weight=weight, apply_update=apply_update)
+            # Throttle intermediate steps, but always write the final step of a
+            # phase so the gauge's inner ring reaches 100% before the phase resets.
+            self._dash_update(
+                step=step or 0, max_step=max_step, step_metrics=metrics, phase=phase,
+                throttle=max_step <= 0 or step != max_step,
+            )
+            if self.record_step_metrics and phase.records_steps:
+                self._record_step_metrics(metrics, phase.name)
+            self.on_step_end(step, batch, metrics, phase)
         return metrics
 
     def _compute_step(
@@ -2166,6 +2207,22 @@ class BaseTrainer(abc.ABC):
         self.on_set_training_mode(training)
 
     # ── Internal: Phases ──────────────────────────────────────────────────────
+
+    @contextmanager
+    def _running(self, phase: Phase) -> Generator[None]:
+        """Mark *phase* as the one running, restoring the previous mark afterwards.
+
+        What :attr:`current_phase` reads, and the reason it cannot go stale: the mark
+        is scoped to the pass rather than assigned to it, so it unwinds on the way
+        out — including when the pass raises — and nests without a phase having to
+        know whether it is already marked.
+        """
+        previous = self._current_phase
+        self._current_phase = phase
+        try:
+            yield
+        finally:
+            self._current_phase = previous
 
     def _bind_phase_name(self, phase: Phase) -> None:
         """Bind ``phase.name`` to *phase*, warning when the name meant another one.
