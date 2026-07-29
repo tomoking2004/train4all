@@ -52,7 +52,7 @@ def test_reduce_lr_on_plateau_without_its_metric_says_so(run_dir):
     class Plateau(TinyTrainer):
         def setup(self) -> None:
             super().setup()
-            self.set_scheduler(torch.optim.lr_scheduler.ReduceLROnPlateau(self._optimizer))
+            self.set_scheduler(torch.optim.lr_scheduler.ReduceLROnPlateau)
 
     trainer = Plateau(
         num_epochs=2, learning_rate=0.1, run_dir=run_dir,
@@ -66,9 +66,7 @@ def test_a_scheduler_that_needs_no_metric_just_steps(run_dir):
     class Cosine(TinyTrainer):
         def setup(self) -> None:
             super().setup()
-            self.set_scheduler(
-                torch.optim.lr_scheduler.CosineAnnealingLR(self._optimizer, T_max=2)
-            )
+            self.set_scheduler(torch.optim.lr_scheduler.CosineAnnealingLR, T_max=2)
 
     trainer = Cosine(num_epochs=2, learning_rate=0.1, run_dir=run_dir, use_progress_bar=False)
     trainer.train(Phase("train", make_loader(8), training=True))

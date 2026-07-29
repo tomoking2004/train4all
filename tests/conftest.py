@@ -20,7 +20,7 @@ class TinyTrainer(BaseTrainer):
         # `or 0.1` would be wrong: learning_rate=0.0 is falsy, and a test that means
         # "a run that cannot learn" would silently get a real learning rate instead.
         lr = 0.1 if self.learning_rate is None else self.learning_rate
-        self.set_optimizer(torch.optim.SGD(self.get_trainable_params(), lr=lr))
+        self.set_optimizer(torch.optim.SGD, lr=lr)
 
     def compute_loss(self, batch: Any) -> torch.Tensor:
         x, y = batch

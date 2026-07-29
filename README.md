@@ -113,9 +113,7 @@ class MyTrainer(BaseTrainer):
         self.head = nn.Linear(64, 10)
 
         self.set_models({"encoder": self.encoder, "head": self.head})
-        self.set_optimizer(
-            torch.optim.Adam(self.get_trainable_params(), lr=self.learning_rate)
-        )
+        self.set_optimizer(torch.optim.Adam)
 
     def compute_loss(self, batch):
         x, y = batch
@@ -168,7 +166,7 @@ Every parameter is optional, and all except `num_epochs` are **keyword-only**, s
 | :-- | :-- | :-- |
 | `num_epochs` | `None` | Total training epochs. Required by `train()`; leave unset to only evaluate (`test()`) or inspect checkpoints. |
 | `batch_size` | `None` | Informational; accessible in `setup()` as `self.batch_size`. |
-| `learning_rate` | `None` | Scalar or per-group dict; available as `self.learning_rate` in `setup()`. Leave unset for learning-rate-free optimizers (e.g. Prodigy, D-Adaptation, Schedule-Free); **pass it explicitly for optimizers that need one** (e.g. Adam, SGD), since `self.learning_rate` is `None` until you do. |
+| `learning_rate` | `None` | Scalar, or a dict keyed by model name for [per-model param groups](#setup-helpers); available as `self.learning_rate` in `setup()`. Leave unset for learning-rate-free optimizers (e.g. Prodigy, D-Adaptation, Schedule-Free); **pass it explicitly for optimizers that need one** (e.g. Adam, SGD), since `self.learning_rate` is `None` until you do. |
 | `max_grad_norm` | `None` | Clip the global gradient norm to this value before each optimizer step. Disabled when `None`. Correct under fp16 AMP — gradients are unscaled first. |
 | `accumulation_steps` | `1` | Accumulate gradients over this many steps before each optimizer update, simulating a larger effective batch with no extra memory. The accumulation is normalized as `Σ wᵢ∇Lᵢ / Σ wᵢ` with weights from `get_batch_weight`; this is the true mean over the effective batch only when the weight matches the loss's denominator (override to the token count for per-token losses — the default sample count fits a per-sample mean). For known-length loaders the last partial cycle of each epoch is always flushed. |
 | `amp` | `None` | Automatic mixed precision. `None` auto-enables bf16 on CUDA (no-op on CPU/MPS); `True`/`"bf16"`/`"fp16"` requests it explicitly (warns if the device is not CUDA); `False` forces full precision. |
@@ -365,13 +363,23 @@ self.set_model("backbone", backbone)                # one at a time
 # graph and checkpoints keep their original keys.
 self.set_model("decoder", decoder, compile=True)
 
-# Set the optimizer.
-optimizer = torch.optim.AdamW(self.get_trainable_params(), lr=self.learning_rate)
-self.set_optimizer(optimizer)
+# Set the optimizer. Given the class, the trainer supplies what it already knows:
+# the trainable parameters, and `learning_rate` as `lr` (dropped when it is None,
+# so learning-rate-free optimizers just work).
+self.set_optimizer(torch.optim.AdamW)
 
-# Set a learning-rate scheduler (optional).
-scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=self.num_epochs)
-self.set_scheduler(scheduler)
+# Restrict it to some models, or pass further hyperparameters — same call.
+self.set_optimizer(torch.optim.AdamW, targets="head", weight_decay=0.01)
+
+# An instance is stored untouched: the escape hatch for hand-built param groups.
+self.set_optimizer(torch.optim.AdamW([
+    {"params": self.encoder.parameters(), "lr": 1e-4},
+    {"params": self.head.parameters(),    "lr": 1e-3},
+]))
+
+# Set a learning-rate scheduler (optional). The class form gets the registered
+# optimizer, so `setup()` needs no local variable to hand it on.
+self.set_scheduler(torch.optim.lr_scheduler.CosineAnnealingLR, T_max=self.num_epochs)
 
 # Collect all trainable parameters (deduplicated) from registered models.
 params = self.get_trainable_params()
@@ -379,6 +387,8 @@ params = self.get_trainable_params()
 # Restrict to specific models, or exclude some.
 params = self.get_trainable_params(targets="head", exclude_targets="encoder")
 ```
+
+`set_optimizer` reads the parameters at the moment you call it, so [`freeze()`](#model-management) belongs above it. A `learning_rate` dict keyed by model name is expanded into one param group per model, which is the one case where `targets` and `exclude_targets` are refused — the keys already name the models.
 
 ---
 

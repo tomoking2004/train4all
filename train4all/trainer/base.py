@@ -89,7 +89,9 @@ class BaseTrainer(abc.ABC):
             leave unset (``None``) to only evaluate (``test()``) or inspect checkpoints.
         batch_size: Batch size (informational; not used internally).
         learning_rate: Learning rate(s) forwarded to the optimizer in ``setup()``.
-            ``None`` (default) sets no rate — leave it unset for learning-rate-free
+            A scalar covers every parameter; a dict keyed by model name gives
+            ``set_optimizer(OptimizerClass)`` one param group per model. ``None``
+            (default) sets no rate — leave it unset for learning-rate-free
             optimizers (e.g. Prodigy, D-Adaptation, Schedule-Free), which then
             keep ``learning_rate`` out of the saved config.
         max_grad_norm: Clip the global gradient norm to this value before each
@@ -368,8 +370,7 @@ class BaseTrainer(abc.ABC):
                 self.classifier = Classifier()
                 self.set_models({"backbone": self.backbone, "classifier": self.classifier})
                 self.freeze("backbone")
-                optimizer = torch.optim.Adam(self.get_trainable_params(), lr=self.learning_rate)
-                self.set_optimizer(optimizer)
+                self.set_optimizer(torch.optim.Adam)  # freeze first: the parameters are read here
         """
 
     @abc.abstractmethod
@@ -1063,17 +1064,123 @@ class BaseTrainer(abc.ABC):
         self._models.clear()
         self._compiled_models.clear()
 
-    def set_optimizer(self, optimizer: Optimizer) -> None:
-        """Set the optimizer."""
-        self._optimizer = optimizer
+    def set_optimizer(
+        self,
+        optimizer: Optimizer | Callable[..., Optimizer],
+        targets: ModuleSpec | None = None,
+        exclude_targets: ModuleSpec | None = None,
+        **kwargs: Any,
+    ) -> None:
+        """
+        Set the optimizer, ready-made or built here from its class.
+
+        Given a class (or any callable returning an optimizer), the trainer supplies
+        what it already knows: the trainable parameters of the selected models, and
+        ``learning_rate`` as ``lr`` — dropped entirely when it is ``None``, so
+        learning-rate-free optimizers need no special case, and expanded into one
+        param group per model when it is a per-group dict keyed by model name.
+
+        Given an instance, it is stored untouched. That is the escape hatch for
+        everything the class form cannot express — hand-built param groups above all.
+
+        Args:
+            optimizer: An optimizer instance, or a class to build one from.
+            targets: Models whose parameters to optimize. ``None`` includes all
+                registered models. Class form only.
+            exclude_targets: Models to exclude. Class form only.
+            **kwargs: Further arguments for the class (``betas``, ``weight_decay``, …).
+                An explicit ``lr`` here overrides ``learning_rate``. Class form only.
+
+        Raises:
+            TypeError: An instance was given alongside arguments that only build one,
+                or ``targets``/``exclude_targets`` alongside a per-group ``learning_rate``.
+
+        Example::
+
+            self.set_optimizer(torch.optim.AdamW)                     # every trainable parameter
+            self.set_optimizer(torch.optim.AdamW, targets="head")     # one model's
+            self.set_optimizer(torch.optim.AdamW, weight_decay=0.01)  # extra hyperparameters
+            self.set_optimizer(torch.optim.AdamW(param_groups))       # built by hand
+        """
+        if isinstance(optimizer, Optimizer):
+            if targets is not None or exclude_targets is not None or kwargs:
+                raise TypeError(
+                    "A ready-made optimizer already carries its parameters and "
+                    "hyperparameters; targets, exclude_targets, and further arguments "
+                    "apply only when building one from its class, e.g. "
+                    "set_optimizer(torch.optim.AdamW, targets='head')."
+                )
+            self._optimizer = optimizer
+            return
+
+        params: list[nn.Parameter] | list[dict[str, Any]]
+        defaults: dict[str, Any] = {}
+        if isinstance(self.learning_rate, dict):
+            if targets is not None or exclude_targets is not None:
+                raise TypeError(
+                    "A per-group learning_rate already names the models it applies to; "
+                    "drop targets/exclude_targets, or pass a scalar learning_rate."
+                )
+            params = [
+                {"params": self.get_trainable_params(name), "lr": lr}
+                for name, lr in self.learning_rate.items()
+            ]
+        else:
+            params = self.get_trainable_params(targets, exclude_targets)
+            if self.learning_rate is not None:
+                defaults["lr"] = self.learning_rate
+        self._optimizer = optimizer(params, **(defaults | kwargs))
 
     def clear_optimizer(self) -> None:
         """Remove the current optimizer."""
         self._optimizer = None
 
-    def set_scheduler(self, scheduler: _Scheduler) -> None:
-        """Set the learning-rate scheduler."""
-        self._scheduler = scheduler
+    def set_scheduler(
+        self,
+        scheduler: _Scheduler | Callable[..., _Scheduler],
+        **kwargs: Any,
+    ) -> None:
+        """
+        Set the learning-rate scheduler, ready-made or built here from its class.
+
+        Given a class (or any callable returning a scheduler), the registered optimizer
+        is supplied as its first argument — so ``setup()`` never has to keep the
+        optimizer in a local variable just to hand it on. Given an instance, it is
+        stored untouched.
+
+        Args:
+            scheduler: A scheduler instance, or a class to build one from.
+            **kwargs: Further arguments for the class (``T_max``, ``gamma``, …).
+                Class form only.
+
+        Raises:
+            TypeError: An instance was given alongside arguments that only build one.
+            RuntimeError: A class was given before ``set_optimizer()``.
+
+        Example::
+
+            self.set_scheduler(torch.optim.lr_scheduler.CosineAnnealingLR, T_max=self.num_epochs)
+        """
+        # Asked through the alias rather than by naming the two classes again:
+        # ``_Scheduler`` is the one place that says what a scheduler is, and a third
+        # kind added there must not leave this test quietly taking its instances for
+        # classes to build from.
+        if isinstance(scheduler, _Scheduler.__value__):
+            if kwargs:
+                raise TypeError(
+                    "A ready-made scheduler already carries its arguments; further "
+                    "arguments apply only when building one from its class, e.g. "
+                    "set_scheduler(CosineAnnealingLR, T_max=self.num_epochs)."
+                )
+            self._scheduler = scheduler
+            return
+
+        if self._optimizer is None:
+            raise RuntimeError(
+                "A scheduler built from its class needs the optimizer it drives; "
+                "call set_optimizer() first."
+            )
+        self._scheduler = scheduler(self._optimizer, **kwargs)
 
     def clear_scheduler(self) -> None:
         """Remove the current scheduler."""
