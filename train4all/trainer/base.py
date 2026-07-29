@@ -12,7 +12,7 @@ from datetime import datetime
 from functools import partial, wraps
 from pathlib import Path
 from types import MappingProxyType
-from typing import Any, Self
+from typing import Any, Self, cast
 
 import numpy as np
 import torch
@@ -1197,11 +1197,12 @@ class BaseTrainer(abc.ABC):
 
             self.set_scheduler(torch.optim.lr_scheduler.CosineAnnealingLR, T_max=self.num_epochs)
         """
-        # Asked through the alias rather than by naming the two classes again:
-        # ``_Scheduler`` is the one place that says what a scheduler is, and a third
-        # kind added there must not leave this test quietly taking its instances for
-        # classes to build from.
-        if isinstance(scheduler, _Scheduler.__value__):
+        # The two classes are named again rather than asked through ``_Scheduler``,
+        # because naming them is what lets the type checker verify the pair: a third
+        # kind added to the alias survives this test, and the call below then fails to
+        # type-check as "not callable". Through the alias it would narrow nothing, and
+        # the drift would reach a user as an instance mistaken for a class to build.
+        if isinstance(scheduler, (LRScheduler, ReduceLROnPlateau)):
             if kwargs:
                 raise TypeError(
                     "A ready-made scheduler already carries its arguments; further "
@@ -2147,8 +2148,9 @@ class BaseTrainer(abc.ABC):
     # ── Internal: Early Stopping / Mode ───────────────────────────────────────
 
     def _require_num_epochs(self) -> int:
-        """Return ``num_epochs``, guarding the training-only entry points against
-        it being unset."""
+        """Return ``num_epochs``, guarding everything reachable only from ``train()``
+        against it being unset — the entry point itself, the epoch iterator, and the
+        dashboard, which is live for exactly as long as a run is."""
         if self.num_epochs is None:
             raise ValueError(
                 "train() requires num_epochs; pass it to the constructor "
@@ -2432,7 +2434,9 @@ class BaseTrainer(abc.ABC):
             self.print(f"{name}: not registered — skipped", level="warn", indent=2)
             return None
         if key_map:
-            state_dict = replace_dict_keys(state_dict, key_map)
+            # ``replace_dict_keys`` rebuilds any shape, so it can only promise
+            # ``object``; a state dict in is a state dict out.
+            state_dict = cast(dict[str, Any], replace_dict_keys(state_dict, key_map))
         try:
             missing, unexpected = model.load_state_dict(state_dict, strict=strict)
             parts = ["weights loaded"]
@@ -2547,7 +2551,7 @@ class BaseTrainer(abc.ABC):
                 lr = lrs[0] if len(set(lrs)) == 1 else lrs
         self._dashboard.update(
             self._current_epoch,
-            self.num_epochs,
+            self._require_num_epochs(),
             self._metrics.epoch,
             self._best_metric,
             self._best_epoch,
@@ -2571,7 +2575,7 @@ class BaseTrainer(abc.ABC):
             return
         self._dashboard.finalize(
             self._current_epoch,
-            self.num_epochs,
+            self._require_num_epochs(),
             self._metrics.epoch,
             self._best_metric,
             self._best_epoch,

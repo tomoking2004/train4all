@@ -92,9 +92,15 @@ def test_replace_dict_keys_rewrites_nested_keys():
     assert out == {"new.layer.weight": 1, "keep": {"new.inner": 2}}
 
 
-def test_replace_dict_keys_walks_sequences():
+def test_replace_dict_keys_walks_lists_and_tuples():
     out = replace_dict_keys([{"old.a": 1}, ({"old.b": 2},)], {"old.": "new."})
     assert out == [{"new.a": 1}, ({"new.b": 2},)]
+
+
+def test_a_sequence_that_cannot_be_rebuilt_passes_through():
+    """`range` is a Sequence, and `range(items)` is a TypeError — so it is left alone."""
+    obj = range(3)
+    assert replace_dict_keys(obj, {"old.": "new."}) is obj
 
 
 def test_replace_dict_keys_leaves_non_string_keys_alone():

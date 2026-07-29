@@ -1,4 +1,4 @@
-from collections.abc import Mapping, Sequence
+from collections.abc import Mapping
 
 __all__ = ["MetricTable", "replace_dict_keys"]
 
@@ -17,7 +17,7 @@ def replace_dict_keys(
     returned unchanged.
 
     Args:
-        obj: Input object (mapping, sequence, or other).
+        obj: Input object (mapping, list, tuple, or other).
         name_map: Mapping of old substring to new substring.
 
     Returns:
@@ -36,7 +36,11 @@ def replace_dict_keys(
             result[new_key] = replace_dict_keys(value, name_map)
         return result
 
-    if isinstance(obj, Sequence) and not isinstance(obj, (str, bytes)):
+    # Lists and tuples by name, not `Sequence`: the rebuild calls `type(obj)(items)`,
+    # which only some sequences accept — `range` is a Sequence and `range(items)` is a
+    # TypeError. Anything else falls through to being returned unchanged, which is
+    # what the docstring already promises.
+    if isinstance(obj, (list, tuple)):
         return type(obj)(replace_dict_keys(item, name_map) for item in obj)
 
     return obj

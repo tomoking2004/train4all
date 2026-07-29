@@ -41,6 +41,11 @@ jobs:
       - name: Lint
         run: ruff check .
 
+      - name: Types
+        # The package ships `py.typed`; this is what keeps that claim honest, on each
+        # version rather than once, since what a checker infers can differ between them.
+        run: mypy
+
       - name: Test
         # `--cov` and not a bare `pytest`: the coverage floor is configured to be
         # enforced where the whole suite runs, and this is that place.

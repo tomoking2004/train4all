@@ -904,10 +904,11 @@ pip install -e ".[dev]"
 | `pytest` | Run the suite. |
 | `pytest --cov` | Run it under coverage, which fails below 80% — the gate before a release. |
 | `ruff check` | Lint. |
+| `mypy` | Type-check the package. Configured in `pyproject.toml`, so it needs no arguments. |
 
 Coverage is a property of the *whole* suite, so its floor is enforced only when the whole suite runs — `pytest tests/test_phase.py` stays a fast, focused loop rather than a failure that says nothing about the code under test.
 
-Both commands run in CI on every push and pull request, once per Python version this package claims to support. That matrix is not a second list to keep in step by hand: `tests/test_docs.py` holds it equal to pyproject's classifiers, so a version promised in the metadata cannot go untested.
+`ruff check`, `mypy`, and `pytest --cov` run in CI on every push and pull request, once per Python version this package claims to support. That matrix is not a second list to keep in step by hand: `tests/test_docs.py` holds it equal to pyproject's classifiers, so a version promised in the metadata cannot go untested.
 
 The suite also holds this README to the code: every exported name, constructor argument, class constant, and dashboard setting must appear here, or `tests/test_public_api.py` fails. The API reference above cannot quietly fall behind the thing it describes.
 

@@ -11,7 +11,10 @@ from typing import ClassVar, Literal, Protocol, runtime_checkable
 # Suppressed rather than required: a replaced stdout (pytest's capture, a
 # notebook) has no reconfigure, and needs none.
 with contextlib.suppress(AttributeError, ValueError):
-    sys.stdout.reconfigure(encoding="utf-8")
+    # The ignore says the same thing the suppression does: `sys.stdout` is typed as
+    # the `TextIO` that has no reconfigure, and this line exists for the runs where
+    # it is really a `TextIOWrapper` that does.
+    sys.stdout.reconfigure(encoding="utf-8")  # type: ignore[union-attr]
 
 __all__ = [
     "DEFAULT_KEY_WIDTH",

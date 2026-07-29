@@ -33,7 +33,9 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = ["pytest", "pytest-cov", "ruff"]
+# The two stub packages are what make `py.typed` above more than a claim: without
+# them the annotations are checked against `Any` wherever psutil or tqdm appears.
+dev = ["mypy", "pytest", "pytest-cov", "ruff", "types-psutil", "types-tqdm"]
 
 [project.urls]
 Repository = "https://github.com/tomoking2004/train4all"
@@ -62,6 +64,24 @@ source = ["train4all"]
 fail_under = 80
 show_missing = true
 skip_covered = true
+
+[tool.mypy]
+# The version floor is stated once, in `requires-python`; unlike ruff, mypy does not
+# read it, so it is forwarded here rather than written independently.
+python_version = "3.12"
+files = ["train4all"]
+# The package ships `py.typed`, so what a downstream checker sees is exactly what is
+# annotated here. These two turn "annotated" into something enforced rather than
+# optional: every function must have annotations, and none may quietly become `Any`.
+disallow_untyped_defs = true
+disallow_incomplete_defs = true
+warn_unused_ignores = true
+
+[[tool.mypy.overrides]]
+# NVML's Python binding ships neither stubs nor `py.typed`. It is reached through one
+# guarded import in `system.py`, so the untyped surface stops there.
+module = ["pynvml"]
+ignore_missing_imports = true
 
 [tool.ruff]
 # The target version is not repeated here: ruff reads it from `requires-python`, so
