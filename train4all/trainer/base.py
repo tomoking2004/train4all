@@ -25,6 +25,7 @@ from tqdm import tqdm
 from train4all.dashboard import Dashboard, DashboardConfig, PhaseSpec
 from train4all.trainer.checkpoint import Checkpoint
 from train4all.trainer.metrics import MetricStore
+from train4all.trainer.models import ModelLedger, ModuleSpec
 from train4all.trainer.phase import Phase, schedule_summary
 from train4all.trainer.report import Report
 from train4all.utils import (
@@ -47,7 +48,6 @@ from train4all.utils import (
 
 __all__ = ["BaseTrainer"]
 
-type ModuleSpec = str | nn.Module | list[str | nn.Module]
 type _Scheduler = LRScheduler | ReduceLROnPlateau
 
 
@@ -275,8 +275,7 @@ class BaseTrainer(abc.ABC):
         self._report = Report(self.print, key_width=self._KEY_WIDTH)
 
         # ── Internal: models / optimization objects ───────────────────────────
-        self._models: dict[str, nn.Module] = {}
-        self._compiled_models: set[str] = set()
+        self._models = ModelLedger()
         self._optimizer: Optimizer | None = None
         self._scheduler: _Scheduler | None = None
 
@@ -1085,20 +1084,16 @@ class BaseTrainer(abc.ABC):
         """
         if not overwrite and name in self._models:
             return
+        # Moved here rather than in the ledger, and only past the guard above: where a
+        # model runs is the trainer's decision, and a skipped call moves nothing.
         model = model.to(self.device)
-        if compile:
-            model.compile()  # in place: keeps the same object and state-dict keys
-            self._compiled_models.add(name)
-        else:
-            self._compiled_models.discard(name)
-        self._models[name] = model
+        self._models.register(name, model, compile=compile)
         if set_attr:
             setattr(self, name, model)
 
     def clear_models(self) -> None:
         """Remove all registered models."""
         self._models.clear()
-        self._compiled_models.clear()
 
     def set_optimizer(
         self,
@@ -1238,27 +1233,15 @@ class BaseTrainer(abc.ABC):
         Returns:
             List of unique parameters with ``requires_grad=True``.
         """
-        modules = self._resolve_modules(targets)
-        if exclude_targets is not None:
-            excluded = set(self._resolve_modules(exclude_targets))
-            modules = [m for m in modules if m not in excluded]
-
-        seen: set[int] = set()
-        params: list[nn.Parameter] = []
-        for m in modules:
-            for p in m.parameters():
-                if p.requires_grad and id(p) not in seen:
-                    params.append(p)
-                    seen.add(id(p))
-        return params
+        return self._models.trainable_params(targets, exclude_targets)
 
     def freeze(self, targets: ModuleSpec) -> None:
         """Disable gradients for the specified model(s)."""
-        self._set_requires_grad(targets, False)
+        self._models.set_requires_grad(targets, False)
 
     def unfreeze(self, targets: ModuleSpec) -> None:
         """Enable gradients for the specified model(s)."""
-        self._set_requires_grad(targets, True)
+        self._models.set_requires_grad(targets, True)
 
     def reset_parameters(self, targets: ModuleSpec | None = None) -> None:
         """
@@ -1270,8 +1253,7 @@ class BaseTrainer(abc.ABC):
         Args:
             targets: Models to reset. ``None`` resets all registered models.
         """
-        for module in self._resolve_modules(targets):
-            module.apply(self._reset_module_parameters)
+        self._models.reset_parameters(targets)
 
     # ── Checkpoints ───────────────────────────────────────────────────────────
 
@@ -1720,22 +1702,7 @@ class BaseTrainer(abc.ABC):
 
     def get_model_summary(self) -> dict[str, str]:
         """Return the name and parameter counts of all registered models as a dict."""
-        result: dict[str, str] = {}
-        for name, model in self._models.items():
-            total = trainable = 0
-            for p in model.parameters():
-                n = p.numel()
-                total += n
-                if p.requires_grad:
-                    trainable += n
-            suffix = " [compiled]" if name in self._compiled_models else ""
-            if trainable == total:
-                result[name] = f"{total:,} params{suffix}"
-            elif trainable:
-                result[name] = f"{trainable:,} / {total:,} trainable{suffix}"
-            else:
-                result[name] = f"frozen{suffix}"
-        return result
+        return self._models.summary()
 
     def print_model_summary(self) -> None:
         """Print the name and parameter counts of all registered models."""
@@ -2174,8 +2141,7 @@ class BaseTrainer(abc.ABC):
             self.print(f"No improvement for {n} {'epoch' if n == 1 else 'epochs'}.", level="warn")
 
     def _set_training_mode(self, training: bool) -> None:
-        for model in self._models.values():
-            model.train(training)
+        self._models.set_training_mode(training)
         self.on_set_training_mode(training)
 
     # ── Internal: Phases ──────────────────────────────────────────────────────
@@ -2554,34 +2520,6 @@ class BaseTrainer(abc.ABC):
             epochs_no_improve=self._epochs_no_improve,
         )
         time.sleep(self._dashboard.poll_s + self._DASH_EXTRA_WAIT_S)
-
-    # ── Internal: Module Utilities ────────────────────────────────────────────
-
-    def _resolve_modules(self, targets: ModuleSpec | None) -> list[nn.Module]:
-        if targets is None:
-            return list(self._models.values())
-        if not isinstance(targets, list):
-            targets = [targets]
-        return [self._resolve_module(t) for t in targets]
-
-    def _resolve_module(self, target: str | nn.Module) -> nn.Module:
-        if isinstance(target, str):
-            if target not in self._models:
-                raise ValueError(f"Model '{target}' is not registered.")
-            return self._models[target]
-        if isinstance(target, nn.Module):
-            return target
-        raise TypeError(f"Expected a model name or nn.Module, got {type(target)}")
-
-    def _set_requires_grad(self, targets: ModuleSpec, flag: bool) -> None:
-        for m in self._resolve_modules(targets):
-            for p in m.parameters():
-                p.requires_grad = flag
-
-    @staticmethod
-    def _reset_module_parameters(m: nn.Module) -> None:
-        if hasattr(m, "reset_parameters") and callable(m.reset_parameters):
-            m.reset_parameters()
 
     # ── Internal: Data Utilities ──────────────────────────────────────────────
 
