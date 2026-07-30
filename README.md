@@ -6,7 +6,7 @@
 ![Python](https://img.shields.io/badge/python-%E2%89%A53.12-blue)
 ![PyTorch](https://img.shields.io/badge/pytorch-%E2%89%A52.0-orange)
 ![License](https://img.shields.io/badge/license-MIT-green)
-![Version](https://img.shields.io/badge/version-0.10.0-informational)
+![Version](https://img.shields.io/badge/version-0.11.0-informational)
 
 **Implement three methods. Get a complete training loop.**
 
@@ -90,7 +90,7 @@ train4all.__version__    # the installed version
 That tracks `main`. Every version is tagged and carries [release notes](https://github.com/tomoking2004/train4all/releases) describing what changed and why; append a tag to pin one:
 
 ```bash
-pip install git+https://github.com/tomoking2004/train4all.git@v0.10.0
+pip install git+https://github.com/tomoking2004/train4all.git@v0.11.0
 ```
 
 ---
