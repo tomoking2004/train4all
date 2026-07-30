@@ -25,7 +25,7 @@ from tqdm import tqdm
 from train4all.dashboard import Dashboard, DashboardConfig, PhaseSpec
 from train4all.trainer.checkpoint import Checkpoint
 from train4all.trainer.metrics import MetricStore
-from train4all.trainer.phase import Phase
+from train4all.trainer.phase import Phase, schedule_summary
 from train4all.utils import (
     DEFAULT_KEY_WIDTH,
     GpuProbe,
@@ -1762,11 +1762,7 @@ class BaseTrainer(abc.ABC):
         Args:
             *phases: The phases of one epoch, in the order they run.
         """
-        def describe(phase: Phase) -> str:
-            kind = "training" if phase.training else "eval"
-            return kind if phase.every == 1 else f"{kind}, every {phase.every} epochs"
-
-        return {p.name: describe(p) for p in phases}
+        return schedule_summary(*phases)
 
     def print_schedule_summary(self, *phases: Phase) -> None:
         """Print the shape of one epoch — the phases, in the order they run."""

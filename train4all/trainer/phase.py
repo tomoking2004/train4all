@@ -4,7 +4,7 @@ from typing import Any
 
 from torch.utils.data import DataLoader
 
-__all__ = ["MetricFn", "Phase"]
+__all__ = ["MetricFn", "Phase", "schedule_summary"]
 
 type MetricFn = Callable[[Any], dict[str, float]]
 
@@ -89,3 +89,23 @@ class Phase:
     def runs_at(self, epoch: int) -> bool:
         """Whether this phase runs at the 1-based ``epoch``."""
         return epoch % self.every == 0
+
+
+def schedule_summary(*phases: Phase) -> dict[str, str]:
+    """
+    The shape of one epoch as a dict: each phase name mapped to how it runs.
+
+    A schedule is an argument to ``train()`` rather than trainer state, so it is
+    not part of ``config.json`` — that file holds constructor arguments and must
+    unpack straight back through ``from_config``. This is the shape's own summary,
+    alongside the model's and the optimizer's, and it reads nothing but the phases
+    themselves.
+
+    Args:
+        *phases: The phases of one epoch, in the order they run.
+    """
+    def describe(phase: Phase) -> str:
+        kind = "training" if phase.training else "eval"
+        return kind if phase.every == 1 else f"{kind}, every {phase.every} epochs"
+
+    return {p.name: describe(p) for p in phases}

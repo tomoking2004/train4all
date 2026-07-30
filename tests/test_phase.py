@@ -4,6 +4,7 @@ import pytest
 from conftest import make_loader
 
 from train4all import Phase
+from train4all.trainer.phase import schedule_summary
 
 
 def test_a_phase_needs_a_name():
@@ -45,3 +46,25 @@ def test_metric_fn_holds_a_function_not_values():
     phase = Phase("train", make_loader(4), metric_fn=lambda _: {"custom": 1.0})
     assert callable(phase.metric_fn)
     assert phase.metric_fn(None) == {"custom": 1.0}
+
+
+# ── Summarizing a schedule ────────────────────────────────────────────────────
+
+
+def test_a_schedule_summarizes_how_each_phase_runs():
+    """A sequence of phases describes itself, with no trainer to ask — which is why
+    this lives beside `Phase` rather than on the trainer that prints it."""
+    summary = schedule_summary(
+        Phase("train", make_loader(8), training=True),
+        Phase("audit", make_loader(8), every=3),
+        Phase("val", make_loader(8)),
+    )
+    assert summary == {
+        "train": "training",
+        "audit": "eval, every 3 epochs",
+        "val": "eval",
+    }
+
+
+def test_an_empty_schedule_summarizes_to_nothing():
+    assert schedule_summary() == {}
