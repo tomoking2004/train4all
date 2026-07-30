@@ -1,0 +1,377 @@
+/* The live dashboard stylesheet. Inlined into shell.html by engine.py rather
+   than linked, so a written page never needs a second request. */
+/* ── Theme tokens — recorder inks on instrument surfaces ────── */
+/* Phase inks are CVD-validated (Machado protan/deutan ΔE ≥ 12 between
+   adjacent slots, both themes) against each theme's panel surface. */
+:root, [data-theme="dark"] {
+  --bg:        #0a0d12;
+  --panel:     #10151c;
+  --text:      #e7eaf0;
+  --dim:       #99a2b1;
+  --faint:     #5d6675;
+  --line:      rgba(255, 255, 255, 0.07);
+  --line-2:    rgba(255, 255, 255, 0.16);
+  --hover:     rgba(255, 255, 255, 0.04);
+  --grid-1:    rgba(141, 172, 224, 0.07);   /* graph-paper minor rule */
+  --grid-2:    rgba(141, 172, 224, 0.14);   /* graph-paper major rule */
+  --tip-bg:    #151b24;
+  --thumb:     rgba(255, 255, 255, 0.15);
+  --shadow:    0 12px 36px rgba(0, 0, 0, 0.42);
+  --edge:      inset 0 1px 0 rgba(255, 255, 255, 0.05);
+  --gold:      #e2bd6e;
+  --good:      #268beb;
+  --bad:       #f2596b;
+  --st-training:   #268beb;
+  --st-evaluating: #a668d6;  /* the val ink lightened — badge text stays legible on night panels */
+  --st-stagnant:   #268beb;  /* plateau keeps the training blue — gold ★ already tells the story */
+  --st-completed:  #e2bd6e;
+  --st-idle:       #8a90a0;
+  --st-stopped:    #f2596b;
+  --c1: #268beb; --c2: #5d76d8; --c3: #7760c5; --c4: #8846b2;
+  --c5: #9243a4; --c6: #9c3e96; --c7: #a63888; --c8: #f2596b;
+  /* display spectrum — vivid stops reserved for decoration (wordmark, gauge
+     ring, runline, ambient washes); data inks above stay CVD-validated */
+  --g1: #5e8bff; --g2: #7a7bff; --g3: #976dfd; --g4: #b262f4;
+  --g5: #cc58e3; --g6: #e150c4; --g7: #ee559b; --g8: #f25c6e;
+  --spectrum: linear-gradient(90deg, #5e8bff, #7a7bff, #976dfd, #b262f4, #cc58e3, #e150c4, #ee559b, #f25c6e);
+  color-scheme: dark;
+}
+[data-theme="light"] {
+  --bg:        #f2f3f0;
+  --panel:     #fcfcfa;
+  --text:      #1a1d23;
+  --dim:       #545b68;
+  --faint:     #8b92a0;
+  --line:      rgba(26, 32, 44, 0.10);
+  --line-2:    rgba(26, 32, 44, 0.24);
+  --hover:     rgba(26, 32, 44, 0.045);
+  --grid-1:    rgba(84, 110, 170, 0.10);
+  --grid-2:    rgba(84, 110, 170, 0.20);
+  --tip-bg:    #ffffff;
+  --thumb:     rgba(26, 32, 44, 0.2);
+  --shadow:    0 1px 2px rgba(24, 30, 42, 0.05), 0 10px 28px rgba(24, 30, 42, 0.07);
+  --edge:      inset 0 1px 0 rgba(255, 255, 255, 0.9);
+  --gold:      #96721b;
+  --good:      #0f61c3;
+  --bad:       #c73949;
+  --st-training:   #0f61c3;
+  --st-evaluating: #762288;
+  --st-stagnant:   #0f61c3;
+  --st-completed:  #96721b;
+  --st-idle:       #6e7480;
+  --st-stopped:    #c73949;
+  --c1: #0f61c3; --c2: #4b50af; --c3: #653d9b; --c4: #762288;
+  --c5: #7d1f7c; --c6: #831a70; --c7: #8a1264; --c8: #c73949;
+  --g1: #3a63dd; --g2: #5256d8; --g3: #6c48d0; --g4: #863cc6;
+  --g5: #a033b6; --g6: #b92e9c; --g7: #c63577; --g8: #cc3f56;
+  --spectrum: linear-gradient(90deg, #3a63dd, #5256d8, #6c48d0, #863cc6, #a033b6, #b92e9c, #c63577, #cc3f56);
+  color-scheme: light;
+}
+:root {
+  --accent: var(--st-idle);
+  --phasecol: var(--st-idle);
+  --mono: 'IBM Plex Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
+  --sans: 'IBM Plex Sans', system-ui, -apple-system, 'Segoe UI', sans-serif;
+  --ease: cubic-bezier(0.22, 0.61, 0.36, 1);
+}
+
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+/* a touch larger than the browser default — the whole UI scales from here */
+html { font-size: 17px; scrollbar-width: thin; scrollbar-color: var(--thumb) transparent; }
+::-webkit-scrollbar { width: 9px; height: 9px; }
+::-webkit-scrollbar-thumb { background: var(--thumb); border-radius: 100px; }
+::selection { background: color-mix(in srgb, var(--accent) 28%, transparent); }
+
+body {
+  font-family: var(--sans); color: var(--text); background: var(--bg);
+  min-height: 100vh; line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+  transition: background 0.3s var(--ease), color 0.3s var(--ease);
+}
+/* ambient washes — three quiet pools of spectrum colour breathing under the
+   instrument panels */
+body::before {
+  content: ''; position: fixed; inset: 0; z-index: -1; pointer-events: none;
+  background:
+    radial-gradient(44% 38% at 10% 6%,  color-mix(in srgb, var(--g1) 10%, transparent), transparent 70%),
+    radial-gradient(38% 32% at 90% 10%, color-mix(in srgb, var(--g3) 8%, transparent), transparent 70%),
+    radial-gradient(42% 36% at 78% 96%, color-mix(in srgb, var(--g8) 7%, transparent), transparent 72%);
+}
+
+/* engraved instrument capitals — the one label voice used across the whole
+   panel: readout labels, section titles, the masthead caption, the footer */
+.brand-cap, .top-meta .k, .k-label, .sg-title, .meta h2, footer {
+  font-family: var(--mono); font-weight: 500; font-size: 0.62rem;
+  letter-spacing: 0.14em; text-transform: uppercase; color: var(--faint);
+}
+
+/* overall run progress — a fixed hairline across the top of the viewport.
+   The eight-ink spectrum is anchored to the viewport, so the line reveals
+   more of the gradient as the run advances; it turns gold on completion to
+   match the gauge's outer ring. */
+.runline { position: fixed; top: 0; left: 0; height: 2px; width: 0%;
+  background-image: var(--spectrum); background-size: 100vw 100%; background-repeat: no-repeat;
+  z-index: 100; transition: width 0.6s var(--ease); }
+.runline.done { background-image: none; background-color: var(--st-completed); }
+
+/* fills the viewport on any display — only a hairline-thin breathing margin */
+.app { max-width: none; margin: 0 auto; padding: 0 clamp(20px, 3vw, 56px) 64px;
+  animation: rise 0.55s var(--ease) both; }
+@keyframes rise { from { opacity: 0; transform: translateY(8px); } }
+
+/* ── Header — an instrument nameplate, ink on the housing ──── */
+.top { display: flex; align-items: center; gap: 18px; padding: 28px 0 24px; flex-wrap: wrap; }
+.brand { display: flex; flex-direction: column; gap: 5px; }
+.brand-link { display: inline-flex; align-items: center; gap: 9px; width: fit-content;
+  color: inherit; text-decoration: none; }
+/* gradient wordmark — the display spectrum flowing through the nameplate */
+.brand-name { font-family: var(--mono); font-size: 1.42rem; font-weight: 600;
+  letter-spacing: -0.02em; line-height: 1;
+  background-image: linear-gradient(100deg, var(--g1), var(--g4) 50%, var(--g7));
+  -webkit-background-clip: text; background-clip: text; color: transparent; }
+.gh { width: 18px; height: 18px; margin-top: 1px; }
+.gh path { fill: var(--faint); transition: fill 0.2s var(--ease); }
+.brand-link:hover .gh path { fill: var(--text); }
+.top-meta { display: flex; gap: 22px; margin-left: auto; flex-wrap: wrap; }
+.top-meta span { display: inline-flex; align-items: baseline; gap: 8px; }
+.top-meta b { color: var(--dim); font-weight: 500; font-family: var(--mono); font-size: 0.78rem;
+  font-variant-numeric: tabular-nums; }
+.pill { display: inline-flex; align-items: center; gap: 7px; padding: 6px 14px; border-radius: 100px;
+  white-space: nowrap; font-family: var(--mono); font-size: 0.64rem; font-weight: 600;
+  letter-spacing: 0.1em; text-transform: uppercase;
+  color: var(--accent); background: color-mix(in srgb, var(--accent) 9%, transparent);
+  border: 1px solid color-mix(in srgb, var(--accent) 26%, transparent);
+  transition: color 0.5s var(--ease), background 0.5s var(--ease), border-color 0.5s var(--ease); }
+.pill .dot { width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
+.pill.live .dot { animation: pulse 1.8s var(--ease) infinite; }
+@keyframes pulse {
+  0%   { box-shadow: 0 0 0 0 color-mix(in srgb, var(--accent) 45%, transparent); }
+  70%  { box-shadow: 0 0 0 5px transparent; }
+  100% { box-shadow: 0 0 0 0 transparent; }
+}
+.tbtn { width: 32px; height: 32px; display: inline-flex; align-items: center; justify-content: center;
+  border-radius: 8px; border: 1px solid transparent; background: none; color: var(--faint); cursor: pointer;
+  transition: color 0.2s var(--ease), border-color 0.2s var(--ease); }
+.tbtn:hover { color: var(--text); border-color: var(--line-2); }
+.tbtn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.tbtn svg { width: 16px; height: 16px; }
+.tbtn .i-moon { display: none; }
+[data-theme="light"] .tbtn .i-moon { display: block; }
+[data-theme="light"] .tbtn .i-sun { display: none; }
+
+/* ── Hero — the instrument fascia: gauge centred, signal-rich flanks ── */
+.hero { display: flex; justify-content: center;
+  background: var(--panel); border: 1px solid var(--line); border-radius: 14px;
+  box-shadow: var(--edge), var(--shadow);
+  padding: clamp(28px, 3.4vw, 46px) clamp(20px, 3.2vw, 54px); }
+/* KPI grid incl. learning rate + GPU (left) · overall gauge (centre) · live
+   step-loss strip chart (right). The flanks stretch to the gauge's height, so
+   the width either side of the gauge carries signal instead of empty margin. */
+.hero-grid { display: grid; grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+  align-items: stretch; gap: clamp(20px, 2.8vw, 56px); width: 100%; margin: 0 auto; }
+.hero-center { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 18px;
+  min-width: 0; padding: 2px clamp(16px, 2vw, 40px);
+  border-left: 1px solid var(--line); border-right: 1px solid var(--line); }
+/* flanks vertically centre their content against the gauge; the strip chart
+   (right) carries flex:1 so it fills the gauge's full height */
+.hero-side { display: flex; flex-direction: column; justify-content: center;
+  gap: clamp(18px, 2.2vw, 30px); min-width: 0; }
+/* a uniform 2-column KPI grid — loss · best, throughput · ETA, learning rate ·
+   GPU memory — six peer cells, no separate strip */
+.kpi-grid { display: grid; grid-template-columns: 1fr 1fr;
+  gap: clamp(18px, 2.4vw, 32px) clamp(20px, 2.8vw, 48px); min-width: 0; }
+
+/* concentric gauge — outer ring = overall run, drawn in ink (the pen's own
+   colour) and crowned gold once the run completes; inner ring = live phase
+   steps in the phase ink. A fine machined tick bezel rings both. */
+.gauge { position: relative; width: clamp(248px, 25vw, 304px); aspect-ratio: 1; }
+.gauge svg { width: 100%; height: 100%; transform: rotate(-90deg); }
+.g-bg, .g-ring { fill: none; }
+.g-bg { stroke: color-mix(in srgb, var(--text) 8%, transparent); }
+.g-ring { stroke-linecap: round;
+  transition: stroke-dashoffset 0.6s var(--ease), stroke 0.5s var(--ease), opacity 0.3s var(--ease); }
+.g-ring.run  { stroke: url(#ringGrad); stroke-width: 13; }   /* overall run sweeps the display spectrum */
+.g-ring.run.done { stroke: var(--st-completed); }            /* the whole run is complete — crown the outer ring gold */
+.rs1 { stop-color: var(--g1); } .rs2 { stop-color: var(--g2); } .rs3 { stop-color: var(--g3); }
+.rs4 { stop-color: var(--g4); } .rs5 { stop-color: var(--g5); } .rs6 { stop-color: var(--g6); }
+.rs7 { stop-color: var(--g7); } .rs8 { stop-color: var(--g8); }
+.g-ring.step { stroke: var(--phasecol); stroke-width: 7; }   /* live phase's steps; gold in the gaps between phases, blank at run end */
+/* machined bezel (72 hairline ticks), epoch divider ticks, gold best-epoch ★ */
+.g-bezel line { stroke: color-mix(in srgb, var(--text) 14%, transparent); stroke-width: 1; }
+.g-tick { stroke: color-mix(in srgb, var(--text) 30%, transparent); stroke-width: 1.5; stroke-linecap: round; }
+.g-best { fill: var(--gold); font-size: 14px; font-weight: 700; text-anchor: middle;
+  dominant-baseline: central; font-family: var(--sans);
+  filter: drop-shadow(0 0 3px color-mix(in srgb, var(--gold) 55%, transparent)); }
+.gauge-center { position: absolute; inset: 0; display: flex; flex-direction: column;
+  align-items: center; justify-content: center; }
+.g-pct { display: flex; align-items: baseline; gap: 3px; font-family: var(--mono);
+  font-variant-numeric: tabular-nums; }
+.g-pct b { font-size: 3.8rem; font-weight: 600; letter-spacing: -0.02em; line-height: 1; }
+.g-pct span { font-size: 1.3rem; color: var(--dim); }
+.gauge-center i { font-style: normal; font-family: var(--mono); font-size: 0.62rem;
+  font-weight: 500; letter-spacing: 0.14em; text-transform: uppercase;
+  color: var(--faint); margin-top: 9px; }
+
+/* phase / epoch / step readout under the gauge */
+.hero-meta { display: flex; align-items: center; justify-content: center; gap: 16px; flex-wrap: wrap;
+  font-size: 0.86rem; color: var(--dim); font-variant-numeric: tabular-nums; }
+.hero-meta b { color: var(--text); font-weight: 500; font-family: var(--mono); }
+.hm-sep { color: var(--faint); }
+.hm-phase { font-style: normal; padding: 2px 10px; border-radius: 100px;
+  font-family: var(--mono); font-size: 0.6rem; font-weight: 600;
+  letter-spacing: 0.1em; text-transform: uppercase; white-space: nowrap; }
+.hm-phase.is-train { color: var(--st-training);
+  background: color-mix(in srgb, var(--st-training) 10%, transparent);
+  border: 1px solid color-mix(in srgb, var(--st-training) 26%, transparent); }
+.hm-phase.is-eval { color: var(--st-evaluating);
+  background: color-mix(in srgb, var(--st-evaluating) 10%, transparent);
+  border: 1px solid color-mix(in srgb, var(--st-evaluating) 26%, transparent); }
+
+/* ── KPI cells — a uniform grid; engraved capitals label ink numerals ── */
+.kpi { min-width: 0; max-width: 100%; overflow: hidden; }   /* a long value clips, never overlaps a neighbour */
+.k-label { display: block; margin-bottom: 8px;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.k-val { display: flex; align-items: baseline; gap: 8px; font-family: var(--mono);
+  font-size: 1.5rem; font-weight: 500;
+  font-variant-numeric: tabular-nums; white-space: nowrap; }
+.k-val .star { color: var(--gold); font-size: 0.92rem; }
+.k-val .k-note { font-size: 0.8rem; font-weight: 400; color: var(--dim); }
+/* a multi-group LR range is a longer string — step the value down so it never
+   collides with the neighbouring cell */
+.k-val.is-range { font-size: 1.08rem; }
+.k-sub { margin-top: 5px; font-size: 0.72rem; color: var(--faint); font-family: var(--mono);
+  font-variant-numeric: tabular-nums; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* GPU-memory usage bar — sits where the sub line would, fills with the used /
+   total ratio and turns red near capacity so memory pressure is obvious */
+.kpi .gbar { margin-top: 10px; height: 5px; border-radius: 100px; overflow: hidden;
+  background: color-mix(in srgb, var(--text) 9%, transparent); }
+.kpi .gbar i { display: block; height: 100%; width: 0%; border-radius: inherit; background: var(--good);
+  transition: width 0.5s var(--ease), background 0.4s var(--ease); }
+
+/* ── Strip chart — the live per-step loss for the active phase, filling the
+   opposite flank on its own. The pen head sits fixed at the right edge and
+   the paper scrolls beneath it: each sample advances the trace one fixed
+   step, in the phase's ink. Shown only while a step is in progress, in step
+   with the throughput / ETA readouts. ── */
+.stepgraph { flex: 1; display: flex; flex-direction: column; gap: 9px; min-width: 0; }
+.sg-head { display: flex; align-items: baseline; gap: 11px; }
+.sg-head .hm-phase { padding: 1px 8px; }
+.sg-body { position: relative; flex: 1; min-height: clamp(118px, 15vw, 188px); width: 100%; }
+.sg-body svg { display: block; width: 100%; height: 100%; }
+.spark-empty { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+  font-family: var(--mono); font-size: 0.72rem; color: var(--faint); letter-spacing: 0.02em; }
+.sg-foot { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 2px 14px;
+  font-family: var(--mono); font-size: 0.68rem; color: var(--faint); font-variant-numeric: tabular-nums; }
+
+/* ── Charts — recorder sheets: ink traces over true graph paper.
+      The grid (and its top margin) only exist once a chart is mounted, so no
+      empty placeholder reserves space before the first epoch. ── */
+.charts { display: block; }
+.grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 18px; margin-top: 18px; }
+.grid:empty { display: none; }
+/* a lone trailing chart (odd count) is centred instead of leaving an empty cell */
+.grid > .chart:last-child:nth-child(odd) { grid-column: 1 / -1; justify-self: center; width: calc(50% - 9px); }
+.chart { position: relative; background: var(--panel); border: 1px solid var(--line); border-radius: 12px;
+  box-shadow: var(--edge), var(--shadow); padding: 16px 18px 12px;
+  transition: border-color 0.35s var(--ease);
+  animation: rise 0.5s var(--ease) both; }
+/* hover — the border warms to gold, the same note of excellence as the best ★
+   and a completed run; the sheet itself holds perfectly still */
+.chart:hover { border-color: color-mix(in srgb, var(--gold) 45%, var(--line-2)); }
+.hovdot { transition: cx 0.09s linear, cy 0.09s linear; }
+.chart-head { display: flex; align-items: center; gap: 12px; margin-bottom: 10px; }
+.chart-name { font-size: 0.9rem; font-weight: 600; letter-spacing: -0.01em; }
+.legend { display: inline-flex; gap: 11px; margin-left: 2px; font-size: 0.74rem; color: var(--dim); }
+.legend span { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
+.legend i { width: 13px; height: 3px; border-radius: 2px; }   /* a trace segment, not a dot */
+.chart-acts { margin-left: auto; display: inline-flex; gap: 6px; opacity: 0; transition: opacity 0.2s var(--ease); }
+.chart:hover .chart-acts, .chart-acts:focus-within { opacity: 1; }
+.cbtn { font-family: var(--mono); font-size: 0.66rem; font-weight: 600; letter-spacing: 0.04em;
+  display: inline-flex; align-items: center; gap: 5px; padding: 4px 10px; border-radius: 6px; cursor: pointer;
+  color: var(--dim); background: none; border: 1px solid var(--line);
+  transition: color 0.2s var(--ease), border-color 0.2s var(--ease), background 0.2s var(--ease); }
+.cbtn:hover { color: var(--text); border-color: var(--line-2); }
+.cbtn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.cbtn.on { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 35%, transparent);
+  background: color-mix(in srgb, var(--accent) 8%, transparent); }
+.chart-body svg { display: block; width: 100%; height: auto; }
+
+/* ── Run details — configuration · environment · model ────── */
+.meta { display: grid; grid-template-columns: repeat(3, 1fr); column-gap: 0; row-gap: 26px;
+  background: var(--panel); border: 1px solid var(--line); border-radius: 12px;
+  box-shadow: var(--edge), var(--shadow);
+  padding: 24px clamp(12px, 1.6vw, 22px) 20px; margin-top: 18px; }
+/* vertical hairlines divide the three columns */
+.meta > div { padding: 2px clamp(20px, 2.6vw, 40px); }
+.meta > div + div { border-left: 1px solid var(--line); }
+.meta h2 { color: var(--dim); margin-bottom: 12px; }
+.kv { display: flex; flex-direction: column; }
+.kv-row { display: flex; justify-content: space-between; align-items: baseline; gap: 12px;
+  padding: 7px 8px; margin: 0 -8px; border-radius: 6px; font-size: 0.8rem; cursor: pointer; user-select: none;
+  transition: background 0.15s var(--ease); }
+.kv-row:hover { background: var(--hover); }
+.kv-row:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.kv-row.copied .kv-v { color: var(--gold); }
+.kv-k { color: var(--dim); flex-shrink: 0; }
+.kv-v { font-family: var(--mono); font-size: 0.76rem; text-align: right; word-break: break-word;
+  font-variant-numeric: tabular-nums; transition: color 0.2s var(--ease); }
+.kv .none { color: var(--faint); font-size: 0.78rem; padding: 4px 0; }
+/* nested configuration — a dict key opens an indented sub-group marked by a
+   hairline guide; scalar leaves stay copyable rows, so a dict / nested-dict
+   learning-rate or scheduler config reads cleanly instead of "[object Object]" */
+.kv-grouphead { font-size: 0.8rem; font-weight: 600; letter-spacing: 0.005em;
+  color: var(--dim); padding: 10px 8px 3px; }
+.kv-nest { margin: 1px 0 3px 7px; padding-left: 12px; border-left: 1px solid var(--line); }
+.kv-nest .kv-grouphead:first-child { padding-top: 4px; }
+
+/* ── Tooltip · toast · footer ──────────────────────────────── */
+.tip { position: fixed; z-index: 90; pointer-events: none; min-width: 116px; padding: 9px 12px;
+  border-radius: 8px; background: var(--tip-bg); border: 1px solid var(--line-2);
+  box-shadow: var(--shadow); font-size: 0.74rem; opacity: 0; transition: opacity 0.12s var(--ease); }
+.tip.show { opacity: 1; }
+.tip-title { color: var(--faint); font-family: var(--mono); font-weight: 500; font-size: 0.6rem;
+  letter-spacing: 0.1em; text-transform: uppercase; margin-bottom: 5px; }
+.tip-row { display: flex; justify-content: space-between; gap: 14px; padding: 1px 0; }
+.tip-row .tk { display: inline-flex; align-items: center; gap: 6px; color: var(--dim); }
+.tip-row .tk i { width: 8px; height: 8px; border-radius: 50%; }
+.tip-row .tv { font-family: var(--mono); color: var(--text); font-variant-numeric: tabular-nums; }
+.toast { position: fixed; bottom: 26px; left: 50%; transform: translate(-50%, 10px); z-index: 95;
+  padding: 8px 17px; border-radius: 100px; background: var(--tip-bg); border: 1px solid var(--line-2);
+  color: var(--gold); font-size: 0.76rem; font-weight: 600; opacity: 0; pointer-events: none;
+  box-shadow: var(--shadow); transition: opacity 0.2s var(--ease), transform 0.2s var(--ease); }
+.toast.show { opacity: 1; transform: translate(-50%, 0); }
+footer { padding: 36px 0 0; text-align: center; }
+
+@media (max-width: 1080px) {
+  /* stack: gauge on top, then the KPI grid, then the strip chart */
+  .hero-grid { display: flex; flex-direction: column; align-items: stretch; gap: 28px; max-width: 560px; }
+  .hero-center { order: -1; border: 0; padding: 0; }
+  .hero-side { gap: 20px; }
+  .stepgraph { flex: none; }
+}
+@media (max-width: 1040px) {
+  .meta { grid-template-columns: 1fr 1fr; }
+  /* the third column wraps to a full-width row — divide it with a rule above */
+  .meta > div:nth-child(3) { grid-column: 1 / -1; border-left: 0; border-top: 1px solid var(--line); padding-top: 24px; }
+}
+@media (max-width: 720px) {
+  .grid { grid-template-columns: 1fr; }
+  .meta { grid-template-columns: 1fr; }
+  .meta > div { border-left: 0; }
+  .meta > div + div { border-top: 1px solid var(--line); padding-top: 24px; }
+  .meta > div:nth-child(3) { grid-column: auto; }
+  .top { gap: 12px; }
+  .brand-name { font-size: 1.22rem; }
+  .top-meta { order: 4; width: 100%; margin-left: 0; }
+  .pill { margin-left: auto; }
+  .gauge { width: 214px; }
+  .g-pct b { font-size: 3rem; }
+  .g-pct span { font-size: 1.05rem; }
+}
+@media (max-width: 460px) {
+  .k-val { font-size: 1.26rem; }
+  .kpi-grid { gap: 16px 24px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation: none !important; transition-duration: 0.01ms !important; }
+}

@@ -45,10 +45,15 @@ Repository = "https://github.com/tomoking2004/train4all"
 include = ["train4all*"]
 
 [tool.setuptools.package-data]
-# Ship the PEP 561 marker, without which every annotation in the package is
-# invisible to a downstream type checker — and the `Typing :: Typed` classifier
-# above would be a claim nothing backs.
+# Two things that are not Python but must travel with it:
+#   py.typed  — the PEP 561 marker, without which every annotation in the package
+#               is invisible to a downstream type checker, and the `Typing :: Typed`
+#               classifier above would be a claim nothing backs.
 train4all = ["py.typed"]
+# The stylesheet and the shell the live dashboard is written into. An installed
+# train4all reads them beside its engine; left out, `use_dashboard=True` would
+# fail on a user's first run rather than here.
+"train4all.dashboard" = ["*.css", "*.html"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
@@ -104,9 +109,6 @@ ignore = [
 ]
 
 [tool.ruff.lint.per-file-ignores]
-# dashboard.py embeds the dashboard's CSS and JavaScript as string literals;
-# they are web assets, not Python, and wrapping them would only obscure them.
-"train4all/utils/dashboard.py" = ["E501"]
 # A test that overrides a lifecycle hook must carry the framework's signature
 # whether or not that test's body reads every argument. Renaming them to `_x`
 # would corrupt the very signatures these tests exist to demonstrate.

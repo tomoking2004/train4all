@@ -14,7 +14,8 @@ from dataclasses import replace
 
 import pytest
 
-from train4all.utils.dashboard import _HTML_SHELL, Dashboard, DashboardConfig, PhaseSpec
+from train4all.dashboard import Dashboard, DashboardConfig, PhaseSpec
+from train4all.dashboard.engine import _HTML_SHELL
 
 SCHEDULE = [
     PhaseSpec("train", training=True, steps=10),

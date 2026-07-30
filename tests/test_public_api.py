@@ -106,7 +106,7 @@ def test_phase_has_no_field_called_metrics():
 
 def test_the_version_is_resolved_in_exactly_one_place():
     from train4all import _version
-    from train4all.utils import dashboard
+    from train4all.dashboard import engine
 
     assert train4all.__version__ is _version.__version__
-    assert dashboard.__version__ is _version.__version__
+    assert engine.__version__ is _version.__version__

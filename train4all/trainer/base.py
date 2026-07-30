@@ -22,17 +22,15 @@ from torch.optim.lr_scheduler import LRScheduler, ReduceLROnPlateau
 from torch.utils.data import DataLoader
 from tqdm import tqdm
 
+from train4all.dashboard import Dashboard, DashboardConfig, PhaseSpec
 from train4all.trainer.checkpoint import Checkpoint
 from train4all.trainer.metrics import MetricStore
 from train4all.trainer.phase import Phase
 from train4all.utils import (
     DEFAULT_KEY_WIDTH,
-    Dashboard,
-    DashboardConfig,
     GpuProbe,
     LogLevel,
     MetricTable,
-    PhaseSpec,
     TrainerLogger,
     UnifiedLogger,
     copy_dir,

@@ -849,7 +849,7 @@ Whether there is a dashboard at all is `use_dashboard`, not a setting here.
 | `stale_after_ms` | `30000` | Mark the run **Offline** after this many ms without a heartbeat. An absolute liveness timeout, independent of `poll_interval_ms` — size it above your slowest synchronous pause (large checkpoint saves, heavy plotting). |
 | `use_server` | `True` | Start a local HTTP server (required for Chrome/Edge on `file://` pages). |
 
-The trainer drives the dashboard for you, but the engine is exported for anyone feeding it from their own loop. `Dashboard` writes the HTML shell once on `initialize()`, overwrites a small JSON file on every `update()`, and inlines that data on `finalize()` so the page survives the process; `mark_started()` sets the elapsed-time origin, `heartbeat()` keeps a long synchronous pause from reading as *Offline*, `open_browser()` raises the page on demand, and `url` / `path` / `active` / `elapsed` / `poll_s` report where and how it is running. `PhaseSpec` is the flat projection of a [`Phase`](#phases) it renders a schedule from (`name`, `training`, `steps`, `every`).
+The trainer drives the dashboard for you, but the engine is exported for anyone feeding it from their own loop — `train4all.dashboard`, a subsystem beside `train4all.trainer` rather than a helper under it, holding the page it writes (`style.css`, `shell.html`) as its own package data. `Dashboard` writes the HTML shell once on `initialize()`, overwrites a small JSON file on every `update()`, and inlines that data on `finalize()` so the page survives the process; `mark_started()` sets the elapsed-time origin, `heartbeat()` keeps a long synchronous pause from reading as *Offline*, `open_browser()` raises the page on demand, and `url` / `path` / `active` / `elapsed` / `poll_s` report where and how it is running. `PhaseSpec` is the flat projection of a [`Phase`](#phases) it renders a schedule from (`name`, `training`, `steps`, `every`).
 
 ---
 
@@ -878,9 +878,6 @@ from train4all.utils import TrainerLogger, print_dict_tree, remove_dir
 | `copy_dir` | Recursive copy with an exclude list — the repeatable, atomic mirror [`snapshot_run()`](#snapshot) is built on. Refuses a destination inside the source. |
 | `remove_dir` | Recursive delete that clears read-only flags first. |
 | `replace_dict_keys` | Rewrite substrings in nested dict keys — what `key_map` uses. |
-| `Dashboard` | The [live dashboard](#live-dashboard) engine. |
-| `DashboardConfig` | Its settings (see the table above). |
-| `PhaseSpec` | A [phase](#phases) as the dashboard sees it. |
 
 Machine introspection lives in `train4all.utils.system` — the trainer delegates to it rather than knowing how to read a Windows registry key or initialize NVML, the same way it delegates the on-disk format to `Checkpoint`:
 
