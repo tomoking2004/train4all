@@ -26,6 +26,7 @@ from train4all.dashboard import Dashboard, DashboardConfig, PhaseSpec
 from train4all.trainer.checkpoint import Checkpoint
 from train4all.trainer.metrics import MetricStore
 from train4all.trainer.phase import Phase, schedule_summary
+from train4all.trainer.report import Report
 from train4all.utils import (
     DEFAULT_KEY_WIDTH,
     GpuProbe,
@@ -39,10 +40,8 @@ from train4all.utils import (
     env_summary,
     get_metric_plot_filename,
     gpu_temperature,
-    print_dict_tree,
     remove_dir,
     replace_dict_keys,
-    separator_rule,
     write_json,
 )
 
@@ -271,6 +270,9 @@ class BaseTrainer(abc.ABC):
         self.use_progress_bar = use_progress_bar
         self.debug_mode = debug_mode
         self.logger = logger or self._create_default_logger()
+        # Handed ``self.print`` rather than the logger: the forward reads
+        # ``self.logger`` when called, so a logger replaced later still takes effect.
+        self._report = Report(self.print, key_width=self._KEY_WIDTH)
 
         # ── Internal: models / optimization objects ───────────────────────────
         self._models: dict[str, nn.Module] = {}
@@ -1710,11 +1712,11 @@ class BaseTrainer(abc.ABC):
 
     def print_env_summary(self) -> None:
         """Print a system and runtime environment summary for experiment reproducibility."""
-        self.print_dict_tree(self.get_env_summary(), header="🖥️  Environment")
+        self._report.env(self.get_env_summary())
 
     def print_config(self) -> None:
         """Print the current trainer configuration."""
-        self.print_dict_tree(self._config, header="⚙️  Configuration")
+        self._report.config(self._config)
 
     def get_model_summary(self) -> dict[str, str]:
         """Return the name and parameter counts of all registered models as a dict."""
@@ -1737,17 +1739,15 @@ class BaseTrainer(abc.ABC):
 
     def print_model_summary(self) -> None:
         """Print the name and parameter counts of all registered models."""
-        self.print_dict_tree(self.get_model_summary(), header="🧠 Model")
+        self._report.model(self.get_model_summary())
 
     def print_optimization_summary(self) -> None:
         """Print the optimizer, scheduler, and gradient-accumulation settings."""
-        tree: dict[str, str] = {
-            "Optimizer": self._optimizer.__class__.__name__ if self._optimizer else "-",
-            "Scheduler": self._scheduler.__class__.__name__ if self._scheduler else "-",
-        }
-        if self.accumulation_steps > 1:
-            tree["Grad accumulation"] = f"{self.accumulation_steps} steps"
-        self.print_dict_tree(tree, header="⚡ Optimization")
+        self._report.optimization(
+            self._optimizer,
+            self._scheduler,
+            accumulation_steps=self.accumulation_steps,
+        )
 
     @staticmethod
     def get_schedule_summary(*phases: Phase) -> dict[str, str]:
@@ -1766,20 +1766,18 @@ class BaseTrainer(abc.ABC):
 
     def print_schedule_summary(self, *phases: Phase) -> None:
         """Print the shape of one epoch — the phases, in the order they run."""
-        self.print_dict_tree(self.get_schedule_summary(*phases), header="🗓️  Schedule")
+        self._report.schedule(self.get_schedule_summary(*phases))
 
     def print_status(self) -> None:
         """Print the current training state (epoch, best monitored value, and recent metrics)."""
-        tree: dict[str, Any] = {
-            "Completed epochs":   self._current_epoch,
-            f"Best {self.monitor_phase} {self.monitor}": (
-                f"{self._best_metric:.4f}  (epoch {self._best_epoch})"
-                if self._best_epoch is not None else "-"
-            ),
-            "Stagnant epochs":    self._epochs_no_improve,
-            "Last epoch metrics": self._metrics.latest() or "-",
-        }
-        self.print_dict_tree(tree, header="📋 Status")
+        self._report.status(
+            completed_epochs=self._current_epoch,
+            monitor=f"{self.monitor_phase} {self.monitor}",
+            best_value=self._best_metric,
+            best_epoch=self._best_epoch,
+            stagnant_epochs=self._epochs_no_improve,
+            latest=self._metrics.latest(),
+        )
 
     def print_metrics(self, metrics: dict[str, float], phase_name: str) -> None:
         """
@@ -1789,15 +1787,7 @@ class BaseTrainer(abc.ABC):
             metrics: Mapping of metric name to value.
             phase_name: Phase label shown in the header.
         """
-        print_dict_tree(
-            metrics,
-            max_depth=0,
-            header=f"📊 {phase_name.capitalize()}",
-            key_width=self._KEY_WIDTH,
-            float_fmt=4,
-            trailing_newline=True,
-            print_fn=self.print,
-        )
+        self._report.metrics(metrics, phase_name)
 
     def print_dict_tree(
         self,
@@ -1813,14 +1803,7 @@ class BaseTrainer(abc.ABC):
             header: Title shown above the tree.
             max_depth: Maximum nesting depth to expand. ``None`` is unlimited.
         """
-        print_dict_tree(
-            tree,
-            max_depth=max_depth,
-            header=header,
-            key_width=self._KEY_WIDTH,
-            trailing_newline=True,
-            print_fn=self.print,
-        )
+        self._report.tree(tree, header=header, max_depth=max_depth)
 
     def print(self, msg: str | None = None, level: LogLevel = "info", *, indent: int = 0) -> None:
         """Forward a message to the logger."""
@@ -2344,7 +2327,7 @@ class BaseTrainer(abc.ABC):
         weights_only: bool = False,
     ) -> None:
         self.print(f"{label} ...")
-        self.print(separator_rule(self._KEY_WIDTH))
+        self._report.rule()
         ckpt = self._read_checkpoint(path)
         if not ckpt:
             return
@@ -2396,12 +2379,7 @@ class BaseTrainer(abc.ABC):
             # checkpoint (the counterpart of ``on_save_checkpoint``).
             self.on_load_checkpoint(ckpt)
 
-        print_dict_tree(
-            loaded,
-            max_depth=0,
-            key_width=self._KEY_WIDTH,
-            print_fn=self.print,
-        )
+        self._report.tree(loaded, max_depth=0)
 
     def _read_checkpoint(self, path: Path | str) -> Checkpoint | None:
         """Read the checkpoint at *path*, or return ``None`` (logging a warning) on failure."""
