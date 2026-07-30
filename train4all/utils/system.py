@@ -15,6 +15,7 @@ import multiprocessing
 import platform
 import shutil
 import subprocess
+import sys
 import time
 from pathlib import Path
 from typing import Any
@@ -60,20 +61,19 @@ def cpu_name() -> str:
     Windows, so query the OS directly and fall back to the architecture only when
     the model is genuinely unavailable.
     """
-    system = platform.system()
     try:
-        if system == "Windows":
+        if sys.platform == "win32":
             import winreg
             with winreg.OpenKey(
                 winreg.HKEY_LOCAL_MACHINE,
                 r"HARDWARE\DESCRIPTION\System\CentralProcessor\0",
             ) as key:
                 return winreg.QueryValueEx(key, "ProcessorNameString")[0].strip()
-        if system == "Darwin":
+        if sys.platform == "darwin":
             return subprocess.check_output(
                 ["sysctl", "-n", "machdep.cpu.brand_string"], text=True
             ).strip()
-        if system == "Linux":
+        if sys.platform == "linux":
             for line in Path("/proc/cpuinfo").read_text().splitlines():
                 if line.startswith("model name"):
                     return line.split(":", 1)[1].strip()
