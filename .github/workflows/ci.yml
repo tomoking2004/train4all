@@ -9,6 +9,12 @@ on:
 permissions:
   contents: read
 
+# One run per branch: when a push supersedes another, the verdict in flight is about a
+# commit no one is on any more, and nothing here deploys for a cancel to interrupt.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   test:
     name: Python ${{ matrix.python-version }} on ${{ matrix.os }}
