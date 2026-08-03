@@ -15,7 +15,7 @@ from dataclasses import replace
 import pytest
 
 from train4all.dashboard import Dashboard, DashboardConfig, PhaseSpec
-from train4all.dashboard.engine import _HTML_SHELL
+from train4all.dashboard.engine import _CSS, _HTML_SHELL
 
 SCHEDULE = [
     PhaseSpec("train", training=True, steps=10),
@@ -264,11 +264,11 @@ def test_elapsed_runs_from_mark_started(dash):
 
 
 # ── The Python ↔ JavaScript seam ──────────────────────────────────────────────
-# The browser half of the dashboard is ~1,300 lines of CSS and JavaScript held in a string
-# literal, so no Python test executes it and coverage cannot even see it. What actually
-# rots across that seam is not the algorithm — it is the *names*: rename a payload key on
-# the Python side, or an element id in the shell, and the script silently reads
-# `undefined` forever. The page does not crash; it just goes blank. These two tests are
+# The browser half of the dashboard is ~1,400 lines of CSS and JavaScript in `style.css`
+# and `shell.html`, so no Python test executes it and coverage cannot even see it. What
+# actually rots across that seam is not the algorithm — it is the *names*: rename a
+# payload key on the Python side, or an element id in the shell, and the script silently
+# reads `undefined` forever. The page does not crash; it just goes blank. These tests are
 # the name chain, checked statically — no browser required.
 
 # The toast is the one element the script creates for itself, on first use.
@@ -299,3 +299,93 @@ def test_every_element_the_script_drives_exists_in_the_shell():
 
     missing = sorted(driven - SELF_CREATED_IDS - present)
     assert not missing, f"the script drives elements the shell does not define: {missing}"
+
+
+# ── The stylesheet ↔ script seam ──────────────────────────────────────────────
+# One layer below the names above, and the same rot. A custom property the script asks
+# for by name and the stylesheet does not define resolves to the empty string: the
+# element renders unstyled rather than wrong, which is what a screenshot review misses.
+# A CSS linter would pass every case here — each is valid CSS that simply meets nothing
+# on the other side — so the seam, not the syntax, is what is worth checking.
+
+TOKEN_DEFINITION = re.compile(r"(--[a-z0-9-]+)\s*:")
+
+# `setMode` composes its ink name at runtime — `var('--st-' + mode + ')'` — so the
+# literal the regexes below see is this stem rather than any real token. The status
+# test is what covers that family.
+COMPOSED_STEM = "--st-"
+
+
+def theme_tokens(selector: str) -> set[str]:
+    """The custom properties one theme's block declares."""
+    block = re.search(rf"{re.escape(selector)}\s*\{{(.*?)\n\}}", _CSS, re.S)
+    assert block, f"the stylesheet has no {selector} block"
+    return set(TOKEN_DEFINITION.findall(block.group(1)))
+
+
+def tokens_named() -> set[str]:
+    """Every custom property the page names — a CSS `var()`, or a quoted token in the
+    script, which is the only reason a `--name` string ever appears in JavaScript."""
+    blob = _CSS + _HTML_SHELL
+    named = set(re.findall(r"var\(\s*(--[a-z0-9-]+)", blob))
+    named |= set(re.findall(r"""['"](--[a-z0-9-]+)['"]""", _HTML_SHELL))
+    return named - {COMPOSED_STEM}
+
+
+def test_both_themes_declare_the_same_tokens():
+    """A token one theme declares and the other omits keeps the first theme's value —
+    a night-mode ink left on a daylight panel, with nothing in the CSS to say so."""
+    dark = theme_tokens(':root, [data-theme="dark"]')
+    light = theme_tokens('[data-theme="light"]')
+
+    assert dark == light, f"the two themes disagree on: {sorted(dark ^ light)}"
+
+
+def test_every_token_the_page_reads_is_one_the_stylesheet_declares():
+    declared = set(TOKEN_DEFINITION.findall(_CSS + _HTML_SHELL))
+
+    orphans = sorted(tokens_named() - declared)
+    assert not orphans, f"the page reads tokens the stylesheet never declares: {orphans}"
+
+
+def test_the_stylesheet_declares_nothing_the_page_never_reads():
+    """The other direction: a dead token is a colour decision no one can see applied."""
+    declared = set(TOKEN_DEFINITION.findall(_CSS + _HTML_SHELL))
+    status_inks = {t for t in declared if t.startswith(COMPOSED_STEM)}
+
+    unread = sorted(declared - tokens_named() - status_inks)
+    assert not unread, f"the stylesheet declares tokens nothing reads: {unread}"
+
+
+def test_every_class_the_stylesheet_styles_is_one_the_shell_can_wear():
+    """A selector nothing can match is not dead weight — it is a style that silently does
+    not apply. `.g-bezel line` was exactly that: the gauge's 72 tick marks hang under an
+    element carrying `id="g-bezel"` and no class, so the bezel drew and never painted.
+    Only this direction is checked; a class the shell wears may be styled by an id or an
+    element rule, so the reverse would flag what is merely a query handle.
+    """
+    selectors = re.sub(r"/\*.*?\*/", "", _CSS, flags=re.S)      # prose names files: .py, .html
+    styled = set(re.findall(r"\.([a-zA-Z][\w-]*)", re.sub(r"\{[^{}]*\}", "", selectors)))
+
+    worn = set()
+    for value in re.findall(r'class\s*=\s*\\?["\']([^"\'\\]*)', _HTML_SHELL):
+        worn |= set(value.split())
+    for line in _HTML_SHELL.splitlines():
+        if "className" in line or "classList" in line:
+            worn |= {t for lit in re.findall(r'["\']([^"\']*)["\']', line) for t in lit.split()}
+
+    unmatched = sorted(styled - worn)
+    assert not unmatched, f"the stylesheet styles classes the shell never wears: {unmatched}"
+
+
+def test_every_status_the_script_can_show_has_an_ink_in_both_themes():
+    """`setMode` builds `--st-<mode>` from the mode it computed. A mode with no matching
+    token blanks the accent colour — the pill, the gauge, and the runline all go grey."""
+    labels = re.search(r"MODE_LABEL = \{(.*?)\};", _HTML_SHELL, re.S)
+    assert labels, "the script no longer declares MODE_LABEL"
+    modes = set(re.findall(r"(\w+):\s*'", labels.group(1)))
+    assert modes, "MODE_LABEL parsed as empty"
+
+    for theme in (':root, [data-theme="dark"]', '[data-theme="light"]'):
+        inks = {t.removeprefix(COMPOSED_STEM) for t in theme_tokens(theme) if t.startswith(COMPOSED_STEM)}
+        assert modes == inks, f"{theme} and MODE_LABEL disagree on: {sorted(modes ^ inks)}"
