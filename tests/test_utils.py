@@ -1,87 +1,20 @@
-"""The helpers the trainer is built from — the modules coverage found untested."""
+"""The helpers the trainer is built from — the modules coverage found untested.
 
-import torch
+Machine introspection has its own file: `system.py` is branches no one runner can
+enter, and `test_system.py` is where they are substituted.
+"""
 
 from train4all.utils import (
     DEFAULT_KEY_WIDTH,
-    GpuProbe,
     UnifiedLogger,
-    cpu_name,
-    cuda_index,
-    empty_cuda_cache,
-    env_summary,
     get_metric_plot_filename,
     get_metric_plot_title,
-    os_name,
-    package_versions,
     print_dict_tree,
     remove_dir,
     replace_dict_keys,
     save_curves_plot,
     separator_rule,
 )
-
-# ── system: machine introspection ─────────────────────────────────────────────
-
-
-def test_os_name_is_not_the_bare_kernel_release():
-    name = os_name()
-    assert name and name != "Unknown"
-
-
-def test_cpu_name_is_a_model_not_just_the_architecture():
-    name = cpu_name()
-    assert name and name != "Unknown"
-
-
-def test_env_summary_reports_the_host(tmp_path):
-    summary = env_summary(tmp_path)
-    assert {"OS", "CPU", "CPU cores", "RAM", "Disk", "GPU", "Python", "PyTorch"} <= set(summary)
-    assert summary["PyTorch"] == torch.__version__
-    assert "GB" in summary["RAM"]
-
-
-def test_env_summary_says_so_when_there_is_no_gpu(tmp_path):
-    summary = env_summary(tmp_path, gpu_index=None)
-    assert summary["GPU"] == "Not available"
-    assert summary["VRAM"] == "-"
-
-
-def test_package_versions_reports_what_it_is_asked_for_in_order():
-    versions = package_versions("pytest", "psutil")
-    assert list(versions) == ["pytest", "psutil"]
-    assert all(v[0].isdigit() for v in versions.values())
-
-
-def test_package_versions_leaves_out_what_is_not_installed():
-    assert list(package_versions("psutil", "no-such-distribution")) == ["psutil"]
-
-
-def test_a_summary_grows_by_merging_package_versions(tmp_path):
-    summary = env_summary(tmp_path) | package_versions("pytest")
-    assert list(summary)[-1] == "pytest"   # merged rows close the banner
-    assert summary["PyTorch"] == torch.__version__
-
-
-def test_cuda_index_of_a_cpu_device_is_zero():
-    assert cuda_index(torch.device("cpu")) == 0
-
-
-def test_cuda_index_honours_an_explicit_gpu():
-    assert cuda_index(torch.device("cuda:3")) == 3
-
-
-def test_gpu_probe_returns_zeros_rather_than_raising_without_a_gpu():
-    """On a machine with no NVML and no nvidia-smi, the probe must stay quiet."""
-    probe = GpuProbe(index=0, ttl_s=0.0)
-    used, total, free = probe.memory_mib()
-    assert (used, total, free) == (0, 0, 0) or total > 0     # either unreadable, or a real GPU
-    assert probe.memory_gb() is None or len(probe.memory_gb()) == 2
-
-
-def test_empty_cuda_cache_is_safe_without_cuda():
-    empty_cuda_cache()          # a no-op off CUDA; must not raise
-
 
 # ── dict_utils: the engine behind load_checkpoint(key_map=...) ────────────────
 
