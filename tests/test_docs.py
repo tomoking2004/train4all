@@ -146,6 +146,39 @@ def test_the_ci_matrix_matches_the_python_classifiers():
     assert tested == promised, f"CI tests {sorted(tested)} but pyproject promises {sorted(promised)}"
 
 
+# ── Counted facts ─────────────────────────────────────────────────────────────
+# A name that goes stale takes something with it — an import fails, a link 404s. A
+# *count* takes nothing: add a hook and the sentence claiming there are fourteen simply
+# becomes untrue, in two files, with everything still passing.
+
+
+def lifecycle_hooks() -> list[str]:
+    """The `on_*` methods a subclass may override, read from the class rather than counted
+    by hand."""
+    source = (ROOT / "train4all" / "trainer" / "base.py").read_text(encoding="utf-8")
+    trainer = next(
+        n for n in ast.parse(source).body
+        if isinstance(n, ast.ClassDef) and n.name == "BaseTrainer"
+    )
+    return [
+        n.name for n in trainer.body
+        if isinstance(n, ast.FunctionDef) and n.name.startswith("on_")
+    ]
+
+
+def test_the_readme_and_pyproject_agree_with_the_class_on_how_many_hooks_there_are():
+    hooks = len(lifecycle_hooks())
+
+    readme = re.search(r"(\d+) hook points", README)
+    assert readme, "the README no longer says how many hook points there are"
+    assert int(readme.group(1)) == hooks, f"the README miscounts the hooks — there are {hooks}"
+
+    pyproject = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
+    stated = re.search(r"The (\d+) lifecycle hooks", pyproject)
+    assert stated, "pyproject no longer explains the B027 ignore by the hook count"
+    assert int(stated.group(1)) == hooks, f"pyproject miscounts the hooks — there are {hooks}"
+
+
 # ── Docstrings ────────────────────────────────────────────────────────────────
 # Two openings coexist in this project, and the choice between them is not free:
 # `"""Summary…` while the docstring is one unbroken run of prose, `"""` alone on its line
