@@ -74,13 +74,26 @@ skip_covered = true
 # The version floor is stated once, in `requires-python`; unlike ruff, mypy does not
 # read it, so it is forwarded here rather than written independently.
 python_version = "3.12"
-files = ["train4all"]
+# The suite is checked too: the tests are what read the public API most heavily, so a
+# signature they misuse is worth catching here rather than in an assertion message.
+files = ["train4all", "tests"]
+# Bodies are checked everywhere, which mypy does not do by default inside a function
+# that carries no annotations. That default is what had kept the suite unchecked even
+# where it was already in `files`: `def test_x(trainer)` is the fixture request pytest
+# reads, and annotating several hundred of those would restate what the fixture already
+# declares. So the tests keep their signatures and still fail here when they misread the
+# API — while `[[tool.mypy.overrides]]` below holds the *package* to the stricter rule.
+check_untyped_defs = true
+warn_unused_ignores = true
+
+[[tool.mypy.overrides]]
 # The package ships `py.typed`, so what a downstream checker sees is exactly what is
 # annotated here. These two turn "annotated" into something enforced rather than
 # optional: every function must have annotations, and none may quietly become `Any`.
+# The tests make no such promise to anyone, which is why this is scoped and not global.
+module = ["train4all.*"]
 disallow_untyped_defs = true
 disallow_incomplete_defs = true
-warn_unused_ignores = true
 
 [[tool.mypy.overrides]]
 # NVML's Python binding ships neither stubs nor `py.typed`. It is reached through one

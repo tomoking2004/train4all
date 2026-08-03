@@ -44,6 +44,7 @@ class GradCapture(TinyTrainer):
 
     def on_before_optimizer_step(self) -> None:
         self.steps += 1
+        assert self._optimizer is not None, "the hook fired without an optimizer to step"
         self.captured = [
             p.grad.detach().clone()
             for group in self._optimizer.param_groups

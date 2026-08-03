@@ -38,7 +38,9 @@ def test_runs_at(every, epoch, runs):
 def test_a_phase_is_frozen():
     phase = Phase("train", make_loader(4))
     with pytest.raises(AttributeError):
-        phase.name = "renamed"
+        # The ignore is the other half of the assertion: the rename is refused at
+        # type-check time too, and `warn_unused_ignores` would notice it stopping.
+        phase.name = "renamed"  # type: ignore[misc]
 
 
 def test_metric_fn_holds_a_function_not_values():

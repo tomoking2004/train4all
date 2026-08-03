@@ -188,6 +188,7 @@ class Watcher(TinyTrainer):
         self.seen: list[tuple[str, bool]] = []
 
     def compute_loss(self, batch: Any) -> torch.Tensor:
+        assert self.current_phase is not None, "compute_loss ran outside a phase"
         self.seen.append((self.current_phase.name, self.training))
         return super().compute_loss(batch)
 

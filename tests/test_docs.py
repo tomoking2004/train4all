@@ -158,14 +158,18 @@ BULLET = re.compile(r"^[ \t]*[-*][ \t]", re.M)
 HEADING_RULE = re.compile(r"^[ \t]*─{3,}[ \t]*$", re.M)
 
 
-def docstring_literal(node: ast.AST) -> ast.Constant | None:
-    """The string a definition opens with, or None when it opens with something else."""
+def docstring_literal(node: ast.AST) -> tuple[ast.Constant, str] | None:
+    """The node a definition opens with and the text it carries, or None when it opens
+    with something other than a string."""
     if not isinstance(node, DEFINITION) or not node.body:
         return None
     first = node.body[0]
     if not isinstance(first, ast.Expr) or not isinstance(first.value, ast.Constant):
         return None
-    return first.value if isinstance(first.value.value, str) else None
+    # The text travels back with the node: an `ast.Constant` holds any literal, so
+    # the caller would have to re-establish that this one is a string.
+    text = first.value.value
+    return (first.value, text) if isinstance(text, str) else None
 
 
 def carries_structure(text: str) -> bool:
@@ -179,14 +183,15 @@ def docstrings() -> list[tuple[str, bool, bool]]:
     for path in sorted(p for d in ("train4all", "tests") for p in (ROOT / d).rglob("*.py")):
         source = path.read_text(encoding="utf-8")
         for node in ast.walk(ast.parse(source)):
-            if (literal := docstring_literal(node)) is None:
+            if (opening := docstring_literal(node)) is None:
                 continue
+            literal, text = opening
             raw = ast.get_source_segment(source, literal) or ""
             after_quotes = raw.partition('"""')[2] or raw.partition("'''")[2]
             found.append((
                 f"{path.relative_to(ROOT).as_posix()}:{literal.lineno}",
                 after_quotes.startswith("\n"),
-                carries_structure(literal.value),
+                carries_structure(text),
             ))
     return found
 

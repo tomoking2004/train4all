@@ -79,6 +79,7 @@ def test_a_per_group_learning_rate_becomes_one_param_group_per_model(run_dir):
     )
     trainer.ensure_setup()
 
+    assert trainer._optimizer is not None, "setup() bound no optimizer"
     groups = trainer._optimizer.param_groups
     assert [g["lr"] for g in groups] == [1e-4, 1e-3]
     assert groups[0]["params"] == trainer.get_trainable_params("net")

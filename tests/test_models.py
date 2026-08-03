@@ -165,13 +165,13 @@ def test_requires_grad_reaches_every_parameter(ledger):
 
 def test_resetting_skips_a_submodule_that_cannot_be_reset(ledger):
     """`ReLU` has no `reset_parameters`, and a model made of both must still reset."""
-    net = nn.Sequential(nn.Linear(2, 2), nn.ReLU())
-    ledger.register("net", net)
-    before = net[0].weight.clone()
+    linear = nn.Linear(2, 2)
+    ledger.register("net", nn.Sequential(linear, nn.ReLU()))
+    before = linear.weight.clone()
 
     ledger.reset_parameters()
 
-    assert not net[0].weight.equal(before)
+    assert not linear.weight.equal(before)
 
 
 def test_the_training_mode_reaches_every_registered_model(ledger):
@@ -208,7 +208,9 @@ def test_set_attr_binds_the_model_the_trainer_registered(run_dir):
 
     trainer.set_model("encoder", net, set_attr=True)
 
-    assert trainer.encoder is net
+    # The ignore states the premise: `encoder` exists only because `set_attr=True`
+    # wrote it, which is the whole of what this test checks.
+    assert trainer.encoder is net  # type: ignore[attr-defined]
 
 
 def test_clearing_the_setup_empties_the_ledger(trainer):

@@ -70,6 +70,7 @@ def test_a_scheduler_that_needs_no_metric_just_steps(run_dir):
 
     trainer = Cosine(num_epochs=2, learning_rate=0.1, run_dir=run_dir, use_progress_bar=False)
     trainer.train(Phase("train", make_loader(8), training=True))
+    assert trainer._optimizer is not None, "setup() bound no optimizer"
     assert trainer._optimizer.param_groups[0]["lr"] < 0.1, "the scheduler never stepped"
 
 

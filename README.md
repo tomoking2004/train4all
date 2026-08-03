@@ -908,7 +908,7 @@ pip install -e ".[dev]"
 | `pytest` | Run the suite. |
 | `pytest --cov` | Run it under coverage, which fails below 80% — the gate before a release. |
 | `ruff check` | Lint. |
-| `mypy` | Type-check the package. Configured in `pyproject.toml`, so it needs no arguments. |
+| `mypy` | Type-check the package and the suite. Configured in `pyproject.toml`, so it needs no arguments. |
 
 Coverage is a property of the *whole* suite, so its floor is enforced only when the whole suite runs — `pytest tests/test_phase.py` stays a fast, focused loop rather than a failure that says nothing about the code under test.
 
