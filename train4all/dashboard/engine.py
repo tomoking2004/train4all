@@ -90,7 +90,7 @@ from pathlib import Path
 from typing import Any
 
 from train4all._version import __version__
-from train4all.utils import MetricTable
+from train4all.utils import TIMESTAMP_FORMAT, MetricTable
 
 __all__ = ["Dashboard", "DashboardConfig", "PhaseSpec"]
 
@@ -99,10 +99,6 @@ __all__ = ["Dashboard", "DashboardConfig", "PhaseSpec"]
 # of a phase — a "recent activity" window that complements the full epoch-level
 # history shown in the charts below.
 _STEP_HISTORY = 96
-
-# How the payload spells a wall-clock time. Both timestamps it carries are rendered
-# by the same call, so the panel that shows them cannot end up with two formats.
-_TIMESTAMP = "%Y-%m-%d %H:%M:%S"
 
 
 def _json_safe(value: Any) -> Any:
@@ -538,9 +534,9 @@ class Dashboard:
             "config":             self._trainer_config,
             "env_summary":        self._env_summary,
             "model_summary":      self._model_summary,
-            "started_at":         self._started_at.strftime(_TIMESTAMP) if self._started_at else None,
+            "started_at":         self._started_at.strftime(TIMESTAMP_FORMAT) if self._started_at else None,
             "elapsed":            str(el).split(".")[0] if el else None,
-            "updated_at":         datetime.now().strftime(_TIMESTAMP),
+            "updated_at":         datetime.now().strftime(TIMESTAMP_FORMAT),
             # The poll interval is not repeated here: the browser reads it from the
             # shell's ``poll-ms`` meta tag, which is the one place it is declared.
             "last_update_ms":     int(time.time() * 1000),

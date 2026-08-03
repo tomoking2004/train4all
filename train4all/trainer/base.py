@@ -30,6 +30,7 @@ from train4all.trainer.phase import Phase, schedule_summary
 from train4all.trainer.report import Report
 from train4all.utils import (
     DEFAULT_KEY_WIDTH,
+    TIMESTAMP_FORMAT,
     GpuProbe,
     LogLevel,
     MetricTable,
@@ -677,7 +678,7 @@ class BaseTrainer(abc.ABC):
         self._dash_init(phases)
 
         start_time = datetime.now()
-        self.print(f"\n🚀 Training started at {start_time:%Y-%m-%d %H:%M:%S}\n")
+        self.print(f"\n🚀 Training started at {start_time.strftime(TIMESTAMP_FORMAT)}\n")
         if self._dashboard:
             self._dashboard.mark_started(start_time)
         self.on_training_start()

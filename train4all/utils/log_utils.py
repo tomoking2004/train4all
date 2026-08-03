@@ -18,6 +18,7 @@ with contextlib.suppress(AttributeError, ValueError):
 
 __all__ = [
     "DEFAULT_KEY_WIDTH",
+    "TIMESTAMP_FORMAT",
     "LogLevel",
     "Printer",
     "TrainerLogger",
@@ -36,6 +37,16 @@ The one place the width is decided: :class:`~train4all.BaseTrainer` adopts it as
 ``_KEY_WIDTH`` and :meth:`~train4all.Checkpoint.print_summary` as its default, so
 the trainer's tables and a standalone checkpoint dump line up by reference rather
 than by coincidence.
+"""
+
+TIMESTAMP_FORMAT = "%Y-%m-%d %H:%M:%S"
+"""How a wall-clock time is spelled wherever the framework writes one.
+
+The one place the format is decided: the log file's ``datefmt``, the trainer's
+"Training started at" line, and the dashboard payload's ``started_at`` /
+``updated_at``. A run's console, its log, and its page therefore agree on how a
+time reads by reference — and the direction of that reference (utils ← dashboard
+← trainer) is why the constant lives here rather than in either caller.
 """
 
 _SEPARATOR_PAD = 48  # separator rule width = key_width + this pad
@@ -186,7 +197,7 @@ class UnifiedLogger:
             handler = logging.FileHandler(self.log_path, mode=self.file_mode, encoding="utf-8")
             handler.setFormatter(logging.Formatter(
                 fmt="%(asctime)s | %(levelname)-8s | %(message)s",
-                datefmt="%Y-%m-%d %H:%M:%S",
+                datefmt=TIMESTAMP_FORMAT,
             ))
             logger.addHandler(handler)
 

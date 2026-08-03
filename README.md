@@ -871,6 +871,7 @@ from train4all.utils import TrainerLogger, print_dict_tree, remove_dir
 | `print_dict_tree` | Render a nested dict as the `├─`/`└─` tree the trainer prints. |
 | `separator_rule` | The horizontal rule drawn under a tree header. |
 | `DEFAULT_KEY_WIDTH` | The `32` behind [`_KEY_WIDTH`](#class-constants) — the one place the tree's column width is decided, so the trainer's tables and `Checkpoint.print_summary()` line up by reference rather than by coincidence. |
+| `TIMESTAMP_FORMAT` | The `"%Y-%m-%d %H:%M:%S"` behind every wall-clock time the framework writes — the log file's `datefmt`, the trainer's *Training started at* line, and the dashboard's *started* / *updated* readouts. One format, so a run's console, its log, and its page cannot disagree. |
 | `save_curves_plot` | Save labelled 1-D curves to a PNG — matplotlib, without pyplot's global state. |
 | `get_metric_plot_title` | Build a plot title from metric name, phase name, and prefix. |
 | `get_metric_plot_filename` | Build a plot filename from the same parts. |
