@@ -400,6 +400,8 @@ params = self.get_trainable_params(targets="head", exclude_targets="encoder")
 
 `set_optimizer` reads the parameters at the moment you call it, so [`freeze()`](#model-management) belongs above it. A `learning_rate` dict keyed by model name is expanded into one param group per model, which is the one case where `targets` and `exclude_targets` are refused — the keys already name the models.
 
+> **`compile=True` on a Windows code page that is not UTF-8** raises `UnicodeDecodeError` on the first compile: PyTorch opens its codegen templates without naming an encoding, and a default of cp932 or cp1252 cannot decode them. The bug is PyTorch's, not train4all's, and `PYTHONUTF8=1` (or `python -X utf8`) sidesteps it. Nothing else here needs it — the console sets its own encoding on import.
+
 ---
 
 ### Model Management
