@@ -58,7 +58,7 @@ def test_metrics_heads_the_table_with_the_phase_and_stays_flat(report, lines):
     assert rows(lines) == {"loss": "0.5000", "accuracy": "0.2500"}
 
 
-# ── Banners the report names the rows of ─────────────────────────────────────
+# ── Banners the report names the rows of ──────────────────────────────────────
 
 
 def test_optimization_reports_the_class_of_what_it_is_handed(report, lines):
@@ -125,7 +125,7 @@ def test_status_shows_a_dash_where_nothing_has_been_recorded(report, lines):
     assert rows(lines)["Last epoch metrics"] == "-"
 
 
-# ── Primitives ───────────────────────────────────────────────────────────────
+# ── Primitives ────────────────────────────────────────────────────────────────
 
 
 def test_a_tree_without_a_header_prints_no_rule(report, lines):
@@ -156,7 +156,7 @@ def test_the_column_the_report_is_built_with_is_the_column_it_prints(lines):
     assert lines[0].index(":") > 48
 
 
-# ── The trainer's side of the delegation ─────────────────────────────────────
+# ── The trainer's side of the delegation ──────────────────────────────────────
 
 
 def test_the_trainer_prints_its_banners_through_the_report(trainer, capsys):

@@ -185,7 +185,7 @@ def test_the_training_mode_reaches_every_registered_model(ledger):
     assert all(model.training for _, model in ledger.items())
 
 
-# ── The trainer's side of the delegation ─────────────────────────────────────
+# ── The trainer's side of the delegation ──────────────────────────────────────
 
 
 def test_overwrite_false_leaves_the_incoming_model_untouched(run_dir):
