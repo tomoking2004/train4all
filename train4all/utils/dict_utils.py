@@ -1,3 +1,16 @@
+"""The shape of a metric table, and the one rewrite that reaches into nested keys.
+
+:data:`MetricTable` names the ``metric → phase → values`` nesting that the trainer, the
+metric store, the plots, and the dashboard payload all hand to one another, so the shape
+is spelled once rather than restated at every boundary. It lives in ``utils``, which
+imports nothing from the framework, because both the trainer and the dashboard need the
+name and the dashboard must not import the trainer to get it.
+
+:func:`replace_dict_keys` is what ``load_checkpoint(key_map=...)`` is built on: renaming
+substrings inside the keys of a state dict, at whatever depth they sit. It knows nothing
+of checkpoints or state dicts, which is why it lives here and not beside either.
+"""
+
 from collections.abc import Mapping
 
 __all__ = ["MetricTable", "replace_dict_keys"]

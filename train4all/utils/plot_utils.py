@@ -1,3 +1,13 @@
+"""Curves to a PNG, and the names the file and its title carry.
+
+Plotting here goes nowhere near pyplot, so a run can write figures without disturbing —
+or being disturbed by — the backend and open figures of whoever imported it.
+
+:func:`get_metric_plot_title` and :func:`get_metric_plot_filename` compose from the same
+parts the two names a metric's plot is known by, so the title drawn on the axes and the
+file it was written to cannot drift apart.
+"""
+
 from collections.abc import Mapping, Sequence
 from pathlib import Path
 

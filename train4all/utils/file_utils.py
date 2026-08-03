@@ -1,3 +1,13 @@
+"""The filesystem work a run does around the edges: its records, its mirror, its cleanup.
+
+Three operations the standard library does not quite give the trainer — a JSON write that
+holds a run's records to be worth less than the run, a directory copy that can be aimed
+safely, and a delete that survives read-only flags.
+
+They are here rather than on the trainer because none of them knows what a run directory
+holds: every function is handed a path, so the layout stays with whoever owns it.
+"""
+
 import contextlib
 import json
 import shutil

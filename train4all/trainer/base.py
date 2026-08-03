@@ -1,3 +1,19 @@
+"""The training loop itself, and the order in which everything happens.
+
+``BaseTrainer`` is what is left once each other concern has been handed to the
+collaborator that owns it: the on-disk format to :class:`~train4all.Checkpoint`, what a
+run measured to :class:`~train4all.MetricStore`, the modules to ``ModelLedger``, the
+console to ``Report``, the shape of an epoch to :class:`~train4all.Phase`, and the host
+to :mod:`train4all.utils.system`. What remains here is the sequence — when a phase runs,
+when gradients are applied, when a checkpoint is written — and the ``on_*`` hooks a
+subclass reaches into that sequence through.
+
+Handing a concern out did not widen the API. ``Checkpoint``, ``MetricStore`` and
+``Phase`` are exported because each is worth holding on its own — the first two read a
+finished run with no trainer in sight. ``ModelLedger`` and ``Report`` are reached only
+through the trainer's own methods, and stay unexported.
+"""
+
 import abc
 import inspect
 import json

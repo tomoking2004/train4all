@@ -1,3 +1,15 @@
+"""How a run says things: the console, the log file, and the tree they share.
+
+:class:`UnifiedLogger` writes to both at once and :class:`TrainerLogger` is the protocol
+it satisfies, so a caller can hand the trainer a logger of their own and the trainer need
+not know the difference. :func:`print_dict_tree` renders the ``├─``/``└─`` tables every
+banner is made of.
+
+The two constants are decisions rather than helpers: :data:`DEFAULT_KEY_WIDTH` and
+:data:`TIMESTAMP_FORMAT` are where a column width and a wall-clock format are settled,
+once, for every table and every timestamp the framework writes.
+"""
+
 import contextlib
 import logging
 import sys

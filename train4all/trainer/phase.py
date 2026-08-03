@@ -1,3 +1,15 @@
+"""What an epoch is made of — the declaration, and nothing that acts on one.
+
+:class:`Phase` is frozen and :func:`schedule_summary` reads only the phases it is handed;
+neither touches a trainer, a loader's contents, or a metric. That is what lets a schedule
+be described before the first batch is drawn, and what keeps the loop itself free of any
+built-in notion of "train" or "val" — those names are a caller's, and everything filed by
+phase is filed under them.
+
+``MetricFn`` is declared here for the same reason: a phase carries one, so the type
+belongs beside the field rather than with the trainer that eventually calls it.
+"""
+
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
