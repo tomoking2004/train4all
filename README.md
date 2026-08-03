@@ -32,9 +32,9 @@ train4all is a minimal PyTorch training framework. Subclass `BaseTrainer`, imple
 - **Early stopping** — patience-based on any `monitor` metric (`min`/`max` mode), with automatic best-checkpoint tracking
 - **Live web dashboard** — a self-contained, dependency-free panel: progress gauge, live KPIs, per-step loss graph, per-metric charts, light & dark themes
 - **Flexible metrics** — epoch- and step-level recording, JSON export, matplotlib curve plots
-- **Snapshot sync** — mirror `run_dir` to any path for cloud-backed storage during long runs
+- **Snapshot sync** — a mirror of `run_dir` at any path, for cloud-backed storage during long runs
 - **Lifecycle hooks** — 14 hook points to inject logic at any stage without subclassing the loop
-- **Step cache** — share tensors between `compute_loss` and `compute_metrics` with no extra forward pass
+- **Step cache** — tensors shared between `compute_loss` and `compute_metrics`, with no extra forward pass
 
 ---
 
@@ -183,7 +183,7 @@ Every parameter is optional, and all except `num_epochs` are **keyword-only**, s
 | `monitor` | `"loss"` | Metric driving best-checkpoint selection and early stopping. |
 | `monitor_mode` | `"min"` | `"min"` (lower is better, e.g. loss) or `"max"` (higher is better, e.g. accuracy). |
 | `monitor_phase` | `"val"` | The [phase](#phases) `monitor` is read from. Just a name — any phase in the schedule can drive selection and early stopping. |
-| `device` | auto | `"cuda"`, `"cuda:1"`, `"mps"`, or `"cpu"`. Auto-detected when `None` — prefers CUDA, then MPS, then CPU. On a multi-GPU machine, pick a specific GPU with `"cuda:<index>"`. |
+| `device` | `None` | `"cuda"`, `"cuda:1"`, `"mps"`, or `"cpu"`. Auto-detected when `None` — prefers CUDA, then MPS, then CPU. On a multi-GPU machine, pick a specific GPU with `"cuda:<index>"`. |
 | `seed` | `None` | Global random seed for Python, NumPy, and PyTorch. |
 | `run_dir` | `"run"` | Output directory for checkpoints, metrics, logs, and plots. |
 | `run_snapshot_dir` | `None` | Mirror directory for `run_dir`. When set, `train()` [snapshots](#snapshot) the run there after every epoch. Must lie outside `run_dir`. |
