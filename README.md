@@ -518,6 +518,8 @@ trainer.update_checkpoint_extras({"notes": "baseline"})   # embed custom data in
 extras = trainer.get_checkpoint_extras()                  # read it back (restored on load)
 ```
 
+Every checkpoint file is written through a temporary beside it that replaces the destination only once complete, so a run interrupted mid-write leaves the previous `latest.pth` for `resume`, never a truncated one.
+
 #### Persisting custom state: `extras` vs. hooks
 
 Two mechanisms embed your own data in a checkpoint. They are complementary — pick by whether the data is static metadata or dynamic state:
@@ -878,6 +880,8 @@ from train4all.utils import TrainerLogger, print_dict_tree, remove_dir
 | `get_metric_plot_title` | Build a plot title from metric name, phase name, and prefix. |
 | `get_metric_plot_filename` | Build a plot filename from the same parts. |
 | `write_json` | Write indented JSON, reporting a failed write through a `print_fn` instead of raising — a run's records are not worth losing the run over. Behind `save_config()` and [`export_epoch_metrics()`](#metrics). |
+| `atomic_replace` | Context manager yielding a temporary beside the destination that replaces it on a clean exit and is removed on any other — so a file is the whole old one or the whole new one, never the middle of a write. Behind `copy_file` and `Checkpoint.save`. |
+| `copy_file` | Copy one file through that temporary, metadata included, so the destination is never partial. Behind `copy_dir` and `backup_checkpoint()`. |
 | `copy_dir` | Recursive copy with an exclude list — the repeatable, atomic mirror [`snapshot_run()`](#snapshot) is built on. Refuses a destination inside the source. |
 | `remove_dir` | Recursive delete that clears read-only flags first. |
 | `replace_dict_keys` | Rewrite substrings in nested dict keys — what `key_map` uses. |

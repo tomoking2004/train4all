@@ -1,5 +1,8 @@
 """Checkpoint owns the on-disk format, so a trainer and an inspector never disagree."""
 
+from pathlib import Path
+
+import pytest
 import torch
 from conftest import TinyTrainer, make_loader
 
@@ -98,3 +101,20 @@ def test_the_best_checkpoint_tracks_the_monitored_metric(run_dir):
     best = Checkpoint.load(trainer.get_best_checkpoint_path())
     val_losses = trainer.get_epoch_metrics()["loss"]["val"]
     assert best.training_state["best_epoch"] == val_losses.index(min(val_losses)) + 1
+
+
+def test_an_interrupted_save_leaves_the_previous_file_untouched(run_dir, monkeypatch):
+    path = run_dir / "ckpt.pth"
+    Checkpoint.build(models={}, extras={"marker": "old"}, weights_only=True).save(path)
+    before = path.read_bytes()
+
+    def dies_midway(_obj, f):
+        Path(f).write_bytes(b"partial")
+        raise OSError("disk full")
+
+    monkeypatch.setattr(torch, "save", dies_midway)
+    with pytest.raises(OSError, match="disk full"):
+        Checkpoint.build(models={}, extras={"marker": "new"}, weights_only=True).save(path)
+
+    assert path.read_bytes() == before
+    assert list(run_dir.iterdir()) == [path]      # and no temporary left behind

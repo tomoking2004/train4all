@@ -19,7 +19,6 @@ import inspect
 import json
 import math
 import random
-import shutil
 import subprocess
 import time
 from collections.abc import Callable, Generator, Iterator
@@ -53,6 +52,7 @@ from train4all.utils import (
     TrainerLogger,
     UnifiedLogger,
     copy_dir,
+    copy_file,
     cuda_index,
     empty_cuda_cache,
     env_summary,
@@ -1356,7 +1356,7 @@ class BaseTrainer(abc.ABC):
             self.print(f"Checkpoint not found, backup skipped: {path.name}", level="warn")
             return
         backup_path = path.with_name(path.name + ".bak")
-        shutil.copyfile(path, backup_path)
+        copy_file(path, backup_path)
         self.print(f"📦 Backup created: {backup_path.name}")
 
     @_require_setup

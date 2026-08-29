@@ -1,8 +1,9 @@
 """The filesystem work a run does around the edges: its records, its mirror, its cleanup.
 
-Three operations the standard library does not quite give the trainer — a JSON write that
-holds a run's records to be worth less than the run, a directory copy that can be aimed
-safely, and a delete that survives read-only flags.
+What the standard library does not quite give the trainer — a JSON write that holds a
+run's records to be worth less than the run, a file write or copy that leaves its
+destination whole or untouched, a directory copy that can be aimed safely, and a delete
+that survives read-only flags.
 
 They are here rather than on the trainer because none of them knows what a run directory
 holds: every function is handed a path, so the layout stays with whoever owns it.
@@ -12,13 +13,13 @@ import contextlib
 import json
 import shutil
 import stat
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Iterator, Sequence
 from pathlib import Path
 from typing import Any
 
 from train4all.utils.log_utils import Printer
 
-__all__ = ["copy_dir", "remove_dir", "write_json"]
+__all__ = ["atomic_replace", "copy_dir", "copy_file", "remove_dir", "write_json"]
 
 
 def _on_remove_error(func: Callable[..., None], path: str, _exc: BaseException) -> None:
@@ -114,17 +115,18 @@ def _is_current(src: Path, dst: Path) -> bool:
     return source.st_size == target.st_size and source.st_mtime_ns == target.st_mtime_ns
 
 
-def _copy_file(src: Path, dst: Path) -> None:
-    """Copy *src* onto *dst* through a temporary, so *dst* is never partial.
+@contextlib.contextmanager
+def atomic_replace(dst: Path) -> Iterator[Path]:
+    """Yield a temporary beside *dst* that replaces it on a clean exit, and is removed on any other.
 
-    The temporary is written beside its destination rather than in the system temp
+    The temporary sits beside its destination rather than in the system temp
     directory, which puts the two on one filesystem and so makes the final
     ``Path.replace`` atomic: at every moment *dst* is the whole old file or the whole
-    new one, never the middle of a copy.
+    new one, never the middle of a write.
     """
     tmp = dst.with_name(f".{dst.name}.partial")
     try:
-        shutil.copy2(src, tmp)
+        yield tmp
         with contextlib.suppress(OSError):
             tmp.chmod(tmp.stat().st_mode | stat.S_IWRITE)
         try:
@@ -135,10 +137,20 @@ def _copy_file(src: Path, dst: Path) -> None:
                 dst.chmod(stat.S_IWRITE)
             tmp.replace(dst)
     finally:
-        # Still present only when the copy failed — a successful replace consumed
-        # it. Leaving nothing half-written behind is the point, though the next
+        # Still present only when the write failed — a successful replace consumed
+        # it. Leaving nothing half-written behind is the point, though a directory
         # copy would sweep it up as an entry the source does not have.
         tmp.unlink(missing_ok=True)
+
+
+def copy_file(src: Path, dst: Path) -> None:
+    """Copy *src* onto *dst* through :func:`atomic_replace`, so *dst* is never partial.
+
+    Metadata travels with the bytes (``shutil.copy2``), which is what lets
+    :func:`copy_dir` tell an unchanged file from a changed one by size and mtime.
+    """
+    with atomic_replace(dst) as tmp:
+        shutil.copy2(src, tmp)
 
 
 def _sync_dir(src: Path, dst: Path, exclude: frozenset[str] = frozenset()) -> None:
@@ -162,7 +174,7 @@ def _sync_dir(src: Path, dst: Path, exclude: frozenset[str] = frozenset()) -> No
             if target.is_dir():
                 _remove(target)  # a directory stands where a file belongs
             if not _is_current(item, target):
-                _copy_file(item, target)
+                copy_file(item, target)
 
     # Last, once every copy is in place: what the source no longer has, and what it
     # now excludes. Deleting first would open a window in which the destination holds

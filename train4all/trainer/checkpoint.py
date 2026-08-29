@@ -25,7 +25,7 @@ from typing import Any, Self
 
 import torch
 
-from train4all.utils import DEFAULT_KEY_WIDTH, MetricTable, Printer, print_dict_tree
+from train4all.utils import DEFAULT_KEY_WIDTH, MetricTable, Printer, atomic_replace, print_dict_tree
 
 __all__ = ["Checkpoint"]
 
@@ -133,12 +133,17 @@ class Checkpoint:
         stays a plain ``torch.save`` payload that any reader — including an older
         train4all — can load.
 
+        The bytes go through a temporary beside *path* (:func:`atomic_replace`),
+        so an interrupted save leaves the previous file (or none) in place rather
+        than a truncated one, and a failed save leaves no temporary behind.
+
         Args:
             path: Destination ``.pth`` file.
         """
         path = Path(path)
         path.parent.mkdir(parents=True, exist_ok=True)
-        torch.save(self._raw, path)
+        with atomic_replace(path) as tmp:
+            torch.save(self._raw, tmp)
 
     # ── Accessors ─────────────────────────────────────────────────────────────
 
