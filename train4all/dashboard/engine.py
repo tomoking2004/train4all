@@ -37,7 +37,7 @@ active phase's recent per-step loss). Instantaneous readings (current metric,
 throughput, ETA, step graph) blank between steps; standing values (best
 monitored value, learning rate, GPU memory) persist.
 
-Below, every metric gets its own zero-dependency SVG chart in a uniform
+Below, every metric gets its own dependency-free SVG chart in a uniform
 two-column grid, the primary (loss) metric first. All charts share the same
 epoch-level history — until the first epoch completes they hold an "awaiting"
 placeholder rather than a one-off per-step view. Each has best-epoch markers,
