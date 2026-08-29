@@ -69,8 +69,10 @@ def write_json(
         ``True`` when the file was written, ``False`` when the write failed.
     """
     path = Path(path)
-    path.parent.mkdir(parents=True, exist_ok=True)
     try:
+        # Inside the try: the promise covers the mkdir too, and a file standing
+        # where the parent directory belongs would otherwise raise past it.
+        path.parent.mkdir(parents=True, exist_ok=True)
         with path.open("w", encoding="utf-8") as f:
             json.dump(data, f, indent=4)
     except Exception as e:

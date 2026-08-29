@@ -14,6 +14,7 @@ from train4all.utils import (
     replace_dict_keys,
     save_curves_plot,
     separator_rule,
+    write_json,
 )
 
 # ── dict_utils: the engine behind load_checkpoint(key_map=...) ────────────────
@@ -126,3 +127,17 @@ def test_remove_dir_deletes_recursively(tmp_path):
     (tmp_path / "a" / "b" / "f.txt").write_text("x", encoding="utf-8")
     remove_dir(tmp_path / "a")
     assert not (tmp_path / "a").exists()
+
+
+def test_write_json_swallows_a_directory_that_cannot_be_created(tmp_path):
+    """The no-raise promise covers the mkdir too: a file standing where the parent
+    directory belongs must cost the record, not the run. (The open that fails inside
+    an existing directory is covered by `test_a_failed_export_is_reported_rather_than_raised`.)
+    """
+    said: list[str] = []
+    (tmp_path / "metrics").write_text("a file, not a directory", encoding="utf-8")
+
+    ok = write_json(tmp_path / "metrics" / "epoch.json", {}, label="metrics", print_fn=said.append)
+
+    assert ok is False
+    assert said and "Failed to write metrics" in said[0]
