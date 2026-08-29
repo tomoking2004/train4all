@@ -221,10 +221,10 @@ class MyTrainer(BaseTrainer):
 | `_METRICS_EPOCH` | `"epoch_metrics"` | Stem of the epoch-metrics JSON export. |
 | `_METRICS_STEP` | `"step_metrics"` | Stem of the step-metrics JSON export. |
 | `_TEST_PHASE` | `"test"` | Name of the [phase](#phases) the `test(loader)` shorthand builds. Pass `test()` a `Phase` to name it anything else. |
-| `_KEY_WIDTH` | `32` | Column width for printed metric and summary tables. |
-| `_KEEP_PROGRESS_BAR` | `False` | Keep tqdm bars on screen after each epoch completes. |
 | `_GPU_TEMP_WARN_C` | `85` | `print_gpu_temperature()` warns above this, in °C. |
 | `_GPU_MEM_TTL_S` | `2.0` | Seconds an `nvidia-smi` memory reading stays cached. |
+| `_KEY_WIDTH` | `32` | Column width for printed metric and summary tables. |
+| `_KEEP_PROGRESS_BAR` | `False` | Keep tqdm bars on screen after each epoch completes. |
 | `_DASH_THROTTLE_S` | `0.5` | Minimum seconds between dashboard step writes. |
 | `_DASH_EXTRA_WAIT_S` | `0.5` | Extra wait after the dashboard is finalized. |
 
