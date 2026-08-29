@@ -1301,22 +1301,35 @@ class BaseTrainer(abc.ABC):
 
     @_require_setup
     def save_checkpoints(self) -> None:
-        """Save the latest, best, and periodic (if configured) checkpoints."""
-        # No explicit mkdir: ``Checkpoint.save`` creates each destination's parent.
+        """Save the latest, best, and periodic (if configured) checkpoints.
+
+        All three hold the same state, so it is serialized once — into the
+        latest checkpoint — and the others are copied from that file. A second
+        ``torch.save`` of a large model costs as much as the first; a copy does not.
+        """
         checkpoint = self._build_checkpoint()
 
         latest_path = self.get_latest_checkpoint_path()
-        self._write_checkpoint(latest_path, checkpoint, f"💾 Latest checkpoint saved: {latest_path.name}")
+        written = self._write_checkpoint(
+            latest_path, checkpoint, f"💾 Latest checkpoint saved: {latest_path.name}",
+        )
+        # ``Checkpoint.save`` is atomic, so a failed write leaves the previous
+        # file in place — last epoch's state, not this one's. Without a sound
+        # source, serialize again rather than copy a stale file over ``best.pth``.
+        source = latest_path if written else None
 
         if self.is_best_epoch():
             best_path = self.get_best_checkpoint_path()
-            self._write_checkpoint(best_path, checkpoint, f"🏆 Best checkpoint saved: {best_path.name}")
+            self._write_checkpoint(
+                best_path, checkpoint, f"🏆 Best checkpoint saved: {best_path.name}", source=source,
+            )
 
         if self.save_interval and self._current_epoch % self.save_interval == 0:
             epoch_path = self.get_checkpoint_path(f"epoch_{self._current_epoch}")
             self._write_checkpoint(
                 epoch_path, checkpoint,
                 f"💾 Epoch {self._current_epoch} checkpoint saved: {epoch_path.name}",
+                source=source,
             )
 
     @_require_setup
@@ -2291,13 +2304,30 @@ class BaseTrainer(abc.ABC):
         self.on_save_checkpoint(checkpoint)
         return checkpoint
 
-    def _write_checkpoint(self, path: Path, checkpoint: Checkpoint, success_msg: str) -> None:
-        """Write *checkpoint* to *path*, logging *success_msg* or a warning on failure."""
+    def _write_checkpoint(
+        self,
+        path: Path,
+        checkpoint: Checkpoint,
+        success_msg: str,
+        source: Path | None = None,
+    ) -> bool:
+        """Write *checkpoint* to *path*, logging *success_msg* or a warning on failure.
+
+        Given *source* — a file already holding this same checkpoint — the bytes
+        are copied from it rather than serialized again. Parent directories are
+        created either way. Returns ``True`` if the file was written.
+        """
         try:
-            checkpoint.save(path)
-            self.print(success_msg)
+            if source is None:
+                checkpoint.save(path)
+            else:
+                path.parent.mkdir(parents=True, exist_ok=True)
+                copy_file(source, path)
         except Exception as e:
             self.print(f"Failed to save {path.name}: {e}", level="warn")
+            return False
+        self.print(success_msg)
+        return True
 
     # ── Internal: Checkpoints (load) ──────────────────────────────────────────
 

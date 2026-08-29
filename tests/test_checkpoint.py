@@ -1,5 +1,6 @@
 """Checkpoint owns the on-disk format, so a trainer and an inspector never disagree."""
 
+import shutil
 from pathlib import Path
 
 import pytest
@@ -103,6 +104,57 @@ def test_the_best_checkpoint_tracks_the_monitored_metric(run_dir):
     assert best.training_state["best_epoch"] == val_losses.index(min(val_losses)) + 1
 
 
+def test_save_checkpoints_serializes_once_and_copies_the_rest(run_dir, monkeypatch):
+    """best.pth and the periodic file are byte copies of latest.pth, not a second torch.save."""
+    trainer = TinyTrainer(
+        num_epochs=1, learning_rate=0.1, run_dir=run_dir,
+        monitor="loss", monitor_phase="val", save_interval=1, use_progress_bar=False,
+    )
+    serialized: list[Path] = []
+    real_save = Checkpoint.save
+
+    def recording(self, path):
+        serialized.append(Path(path))
+        real_save(self, path)
+
+    monkeypatch.setattr(Checkpoint, "save", recording)
+    trainer.train(
+        Phase("train", make_loader(8), training=True),
+        Phase("val", make_loader(8)),
+    )
+
+    latest = trainer.get_latest_checkpoint_path()
+    assert serialized == [latest]
+    for copy in (trainer.get_best_checkpoint_path(), trainer.get_checkpoint_path("epoch_1")):
+        assert copy.read_bytes() == latest.read_bytes()
+
+
+def test_a_failed_latest_write_is_not_copied_over_best(run_dir, monkeypatch):
+    """The atomic save leaves last epoch's latest.pth intact; copying it would stamp a stale state as best."""
+    trainer = TinyTrainer(
+        num_epochs=1, learning_rate=0.1, run_dir=run_dir,
+        monitor="loss", monitor_phase="val", use_progress_bar=False,
+    )
+    trainer.train(
+        Phase("train", make_loader(8), training=True),
+        Phase("val", make_loader(8)),
+    )
+    latest, best = trainer.get_latest_checkpoint_path(), trainer.get_best_checkpoint_path()
+    trainer.update_checkpoint_extras({"marker": "this epoch"})   # state the file on disk lacks
+    real_save = Checkpoint.save
+
+    def refuse(self, path):
+        if Path(path) == latest:
+            raise OSError("disk full")
+        real_save(self, path)
+
+    monkeypatch.setattr(Checkpoint, "save", refuse)
+    trainer.save_checkpoints()                  # a save failure is a warning, never a raise
+
+    assert "marker" not in Checkpoint.load(latest).extras
+    assert Checkpoint.load(best).extras["marker"] == "this epoch"
+
+
 def test_an_interrupted_save_leaves_the_previous_file_untouched(run_dir, monkeypatch):
     path = run_dir / "ckpt.pth"
     Checkpoint.build(models={}, extras={"marker": "old"}, weights_only=True).save(path)
@@ -118,3 +170,27 @@ def test_an_interrupted_save_leaves_the_previous_file_untouched(run_dir, monkeyp
 
     assert path.read_bytes() == before
     assert list(run_dir.iterdir()) == [path]      # and no temporary left behind
+
+
+def test_an_interrupted_copy_leaves_the_previous_best_untouched(run_dir, monkeypatch):
+    trainer = TinyTrainer(
+        num_epochs=1, learning_rate=0.1, run_dir=run_dir,
+        monitor="loss", monitor_phase="val", use_progress_bar=False,
+    )
+    trainer.train(
+        Phase("train", make_loader(8), training=True),
+        Phase("val", make_loader(8)),
+    )
+    best = trainer.get_best_checkpoint_path()
+    before = best.read_bytes()
+    trainer.update_checkpoint_extras({"marker": "this epoch"})
+
+    def dies_midway(_src, dst):
+        Path(dst).write_bytes(b"partial")
+        raise OSError("disk full")
+
+    monkeypatch.setattr(shutil, "copy2", dies_midway)
+    trainer.save_checkpoints()                  # latest is serialized; its copy to best fails
+
+    assert best.read_bytes() == before
+    assert not list(best.parent.glob(".*.partial"))
