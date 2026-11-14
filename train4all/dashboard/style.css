@@ -1,377 +1,270 @@
 /* The live dashboard stylesheet. Inlined into shell.html by engine.py rather
    than linked, so a written page never needs a second request. */
-/* ── Theme tokens — recorder inks on instrument surfaces ────── */
-/* Phase inks are CVD-validated (Machado protan/deutan ΔE ≥ 12 between
-   adjacent slots, both themes) against each theme's panel surface. */
+/* ── Theme tokens ───────────────────────────────────────────── */
+/* One colour family — blue through violet to rose — and one colour per meaning,
+   so the same hue never says two things:
+     · a phase is its ink, --c1…--c8, wherever that phase appears: train blue,
+       validation rose, then plum, sky, … in a fixed order drawn from the same
+       family, stepped separately for each theme so neighbouring slots stay
+       apart under colour-vision deficiency;
+     · the run as a whole is the spectrum from the first ink to the second —
+       the run bar and nothing else;
+     · --tone, the violet between them, is the page's own voice: a control that
+       is on, a level;
+     · gold is a run that finished, and appears nowhere else;
+     · red is the one alarm — a run that failed or stopped answering, or
+       memory near its limit;
+     · grey is a run that is not running: not started yet, or interrupted.
+   Those last three colours are the --st-* inks, declared for each state a run
+   can rest in. A run that is moving has none of its own: its status wears the
+   running phase's ink. The neutrals lean toward the family's blue, which is
+   what lets the inks sit on them rather than against them. Two planes per
+   theme: the page, and the panels raised off it by fill alone — no border, no
+   shadow. */
 :root, [data-theme="dark"] {
-  --bg:        #0a0d12;
-  --panel:     #10151c;
-  --text:      #e7eaf0;
-  --dim:       #99a2b1;
-  --faint:     #5d6675;
-  --line:      rgba(255, 255, 255, 0.07);
-  --line-2:    rgba(255, 255, 255, 0.16);
-  --hover:     rgba(255, 255, 255, 0.04);
-  --grid-1:    rgba(141, 172, 224, 0.07);   /* graph-paper minor rule */
-  --grid-2:    rgba(141, 172, 224, 0.14);   /* graph-paper major rule */
-  --tip-bg:    #151b24;
-  --thumb:     rgba(255, 255, 255, 0.15);
-  --shadow:    0 12px 36px rgba(0, 0, 0, 0.42);
-  --edge:      inset 0 1px 0 rgba(255, 255, 255, 0.05);
-  --gold:      #e2bd6e;
-  --good:      #268beb;
-  --bad:       #f2596b;
-  --st-training:   #268beb;
-  --st-evaluating: #a668d6;  /* the val ink lightened — badge text stays legible on night panels */
-  --st-stagnant:   #268beb;  /* plateau keeps the training blue — gold ★ already tells the story */
-  --st-completed:  #e2bd6e;
-  --st-idle:       #8a90a0;
-  --st-stopped:    #f2596b;
-  --c1: #268beb; --c2: #5d76d8; --c3: #7760c5; --c4: #8846b2;
-  --c5: #9243a4; --c6: #9c3e96; --c7: #a63888; --c8: #f2596b;
-  /* display spectrum — vivid stops reserved for decoration (wordmark, gauge
-     ring, runline, ambient washes); data inks above stay CVD-validated */
-  --g1: #5e8bff; --g2: #7a7bff; --g3: #976dfd; --g4: #b262f4;
-  --g5: #cc58e3; --g6: #e150c4; --g7: #ee559b; --g8: #f25c6e;
-  --spectrum: linear-gradient(90deg, #5e8bff, #7a7bff, #976dfd, #b262f4, #cc58e3, #e150c4, #ee559b, #f25c6e);
+  --page:   #0a0c12;
+  --panel:  #131722;
+  --text:   #eceef5;
+  --dim:    #a0a7b8;
+  --faint:  #747c90;
+  --grid:   #232838;
+  --hover:  rgba(160, 175, 255, 0.08);
+  --tone:   #9a6cf5;
+  --st-completed:   #e3b341;
+  --st-idle:        #747c90;
+  --st-stopped:     #ff5c4d;
+  --st-failed:      var(--st-stopped);
+  --st-interrupted: var(--st-idle);
+  --c1: #4d8eff; --c2: #e8559f; --c3: #8e4aa8; --c4: #2f95dd;
+  --c5: #e8634f; --c6: #9a6cf5; --c7: #1aa3b8; --c8: #6a6ff0;
   color-scheme: dark;
 }
 [data-theme="light"] {
-  --bg:        #f2f3f0;
-  --panel:     #fcfcfa;
-  --text:      #1a1d23;
-  --dim:       #545b68;
-  --faint:     #8b92a0;
-  --line:      rgba(26, 32, 44, 0.10);
-  --line-2:    rgba(26, 32, 44, 0.24);
-  --hover:     rgba(26, 32, 44, 0.045);
-  --grid-1:    rgba(84, 110, 170, 0.10);
-  --grid-2:    rgba(84, 110, 170, 0.20);
-  --tip-bg:    #ffffff;
-  --thumb:     rgba(26, 32, 44, 0.2);
-  --shadow:    0 1px 2px rgba(24, 30, 42, 0.05), 0 10px 28px rgba(24, 30, 42, 0.07);
-  --edge:      inset 0 1px 0 rgba(255, 255, 255, 0.9);
-  --gold:      #96721b;
-  --good:      #0f61c3;
-  --bad:       #c73949;
-  --st-training:   #0f61c3;
-  --st-evaluating: #762288;
-  --st-stagnant:   #0f61c3;
-  --st-completed:  #96721b;
-  --st-idle:       #6e7480;
-  --st-stopped:    #c73949;
-  --c1: #0f61c3; --c2: #4b50af; --c3: #653d9b; --c4: #762288;
-  --c5: #7d1f7c; --c6: #831a70; --c7: #8a1264; --c8: #c73949;
-  --g1: #3a63dd; --g2: #5256d8; --g3: #6c48d0; --g4: #863cc6;
-  --g5: #a033b6; --g6: #b92e9c; --g7: #c63577; --g8: #cc3f56;
-  --spectrum: linear-gradient(90deg, #3a63dd, #5256d8, #6c48d0, #863cc6, #a033b6, #b92e9c, #c63577, #cc3f56);
+  --page:   #f2f3f8;
+  --panel:  #ffffff;
+  --text:   #151823;
+  --dim:    #5a6173;
+  --faint:  #8a91a3;
+  --grid:   #e7e9f1;
+  --hover:  rgba(40, 50, 110, 0.06);
+  --tone:   #7c4fe0;
+  --st-completed:   #c98a00;
+  --st-idle:        #8a91a3;
+  --st-stopped:     #e0412f;
+  --st-failed:      var(--st-stopped);
+  --st-interrupted: var(--st-idle);
+  --c1: #2f6fed; --c2: #e6458f; --c3: #7f3a94; --c4: #1f8fe0;
+  --c5: #e2553f; --c6: #7c4fe0; --c7: #0e9fb5; --c8: #5458e0;
   color-scheme: light;
 }
 :root {
   --accent: var(--st-idle);
-  --phasecol: var(--st-idle);
-  --mono: 'IBM Plex Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
-  --sans: 'IBM Plex Sans', system-ui, -apple-system, 'Segoe UI', sans-serif;
-  --ease: cubic-bezier(0.22, 0.61, 0.36, 1);
+  /* the monitored phase's ink, set by the script */
+  --mon: var(--c2);
+  --spectrum: linear-gradient(90deg, var(--c1), var(--tone), var(--c2));
+  --sans: 'Instrument Sans', system-ui, -apple-system, 'Segoe UI', sans-serif;
 }
 
+/* ── Measure ────────────────────────────────────────────────── */
+/* Text is set in three sizes — 13, 14 and 16px — beside two display sizes, the
+   run's headline and a panel's figure; a chart's axis text, drawn in its own
+   coordinates, is 11.5px. Three weights and no others: 400 reads; 500 lifts a
+   value, a control or a sub-heading out of the text around it; 600 is a title,
+   or the figure a panel, a key or a row is about. Space is cut on a 4px grid:
+   mostly 4 · 8 · 12 · 16 · 24.
+   Every figure that ticks while you watch is tabular, so nothing shifts; the
+   Best figure, which moves once an epoch at most, keeps the face's own
+   numerals. Every name the run supplies may wrap, or is cut short where a
+   column head cannot, so nothing it could be called can push a panel out of
+   its column. */
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-/* a touch larger than the browser default — the whole UI scales from here */
-html { font-size: 17px; scrollbar-width: thin; scrollbar-color: var(--thumb) transparent; }
-::-webkit-scrollbar { width: 9px; height: 9px; }
-::-webkit-scrollbar-thumb { background: var(--thumb); border-radius: 100px; }
-::selection { background: color-mix(in srgb, var(--accent) 28%, transparent); }
-
+[hidden] { display: none !important; }
+html { font-size: 16px; }
 body {
-  font-family: var(--sans); color: var(--text); background: var(--bg);
-  min-height: 100vh; line-height: 1.5;
-  -webkit-font-smoothing: antialiased;
-  transition: background 0.3s var(--ease), color 0.3s var(--ease);
+  font-family: var(--sans); color: var(--text); background: var(--page);
+  min-height: 100vh; line-height: 1.5; -webkit-font-smoothing: antialiased;
+  font-variant-numeric: tabular-nums; overflow-wrap: anywhere;
 }
-/* ambient washes — three quiet pools of spectrum colour breathing under the
-   instrument panels */
-body::before {
-  content: ''; position: fixed; inset: 0; z-index: -1; pointer-events: none;
-  background:
-    radial-gradient(44% 38% at 10% 6%,  color-mix(in srgb, var(--g1) 10%, transparent), transparent 70%),
-    radial-gradient(38% 32% at 90% 10%, color-mix(in srgb, var(--g3) 8%, transparent), transparent 70%),
-    radial-gradient(42% 36% at 78% 96%, color-mix(in srgb, var(--g8) 7%, transparent), transparent 72%);
-}
+:focus-visible { outline: 2px solid var(--tone); outline-offset: 2px; }
+h2 { font-size: 1rem; font-weight: 600; letter-spacing: -0.01em; line-height: 1.25; }
+button { transition: color 0.15s, background-color 0.15s; }
 
-/* engraved instrument capitals — the one label voice used across the whole
-   panel: readout labels, section titles, the masthead caption, the footer */
-.brand-cap, .top-meta .k, .k-label, .sg-title, .meta h2, footer {
-  font-family: var(--mono); font-weight: 500; font-size: 0.62rem;
-  letter-spacing: 0.14em; text-transform: uppercase; color: var(--faint);
-}
+.page { max-width: 2200px; margin: 0 auto; padding: 0 clamp(16px, 3vw, 52px) 64px; }
+.panel { min-width: 0; padding: 24px; border-radius: 20px; background: var(--panel); }
 
-/* overall run progress — a fixed hairline across the top of the viewport.
-   The eight-ink spectrum is anchored to the viewport, so the line reveals
-   more of the gradient as the run advances; it turns gold on completion to
-   match the gauge's outer ring. */
-.runline { position: fixed; top: 0; left: 0; height: 2px; width: 0%;
-  background-image: var(--spectrum); background-size: 100vw 100%; background-repeat: no-repeat;
-  z-index: 100; transition: width 0.6s var(--ease); }
-.runline.done { background-image: none; background-color: var(--st-completed); }
+/* ── Top bar ────────────────────────────────────────────────── */
+.bar { display: flex; align-items: center; gap: 8px; padding: 16px 0; }
+.mark { font-weight: 600; letter-spacing: -0.01em; }
+.ver { font-size: 0.8125rem; color: var(--faint); }
+/* the last tool's icon, not its padding, meets the page's right edge */
+.bar-end { margin-left: auto; margin-right: -12px; display: flex; align-items: center; gap: 4px; }
+.status { display: inline-flex; align-items: center; gap: 8px; margin-right: 8px;
+  font-size: 0.875rem; font-weight: 500; white-space: nowrap; }
+.status-dot { position: relative; width: 8px; height: 8px; border-radius: 50%; background: var(--accent); }
+/* the page's one idle motion: a ring leaves the dot while the run is alive */
+.status[data-live] .status-dot::after { content: ''; position: absolute; inset: 0; border-radius: 50%;
+  background: var(--accent); animation: beat 2.4s ease-out infinite; }
+@keyframes beat { from { opacity: 0.55; transform: scale(1); } 70%, to { opacity: 0; transform: scale(3); } }
+.tool { display: inline-flex; align-items: center; gap: 8px; padding: 8px 12px;
+  font: inherit; font-size: 0.875rem; color: var(--dim); white-space: nowrap; text-decoration: none;
+  background: none; border: 0; border-radius: 999px; cursor: pointer; transition: color 0.15s, background-color 0.15s; }
+.tool:hover { color: var(--text); background: var(--hover); }
+.tool[aria-pressed="true"] { color: var(--text); background: color-mix(in srgb, var(--tone) 28%, transparent); }
+.tool svg { width: 16px; height: 16px; flex: none; }
 
-/* fills the viewport on any display — only a hairline-thin breathing margin */
-.app { max-width: none; margin: 0 auto; padding: 0 clamp(20px, 3vw, 56px) 64px;
-  animation: rise 0.55s var(--ease) both; }
-@keyframes rise { from { opacity: 0; transform: translateY(8px); } }
+/* ── The run — where it is, how long is left, and its two bars ── */
+.run { padding: clamp(16px, 3vh, 32px) 0 24px; }
+.run-head { display: flex; align-items: flex-end; justify-content: space-between;
+  flex-wrap: wrap; gap: 16px 40px; margin-bottom: 24px; }
+.run-head > * { min-width: 0; }
+.run-title, .run-eta { font-size: clamp(2rem, 1.25rem + 2.2vw, 3.25rem);
+  letter-spacing: -0.03em; line-height: 1.05; text-wrap: balance; }
+.run-title { font-weight: 600; }
+.run-eta { font-weight: 500; }
+.run-time { text-align: right; }
+.sub { margin-top: 8px; color: var(--dim); text-wrap: pretty; }
+.sub:empty { display: none; }
+/* Size is importance. Once the run has finished its headline is no longer the news —
+   the result is — so it is set at reading size and the Best figure leads the page. */
+.run-head[data-quiet] { margin-bottom: 16px; }
+.run-head[data-quiet] .run-title { font-size: 1rem; font-weight: 600; letter-spacing: -0.01em; line-height: 1.5; }
+.run-head[data-quiet] .sub { margin-top: 0; font-size: 0.875rem; }
+/* The whole run. Its fill is a window onto a spectrum as wide as the track —
+   train's ink at one end, validation's at the other — so the bar shows more of
+   it as the run advances. The track is the same spectrum, faint: the part
+   still to come. Once the run is over the bar takes the colour of how it ended:
+   gold for finished, red for failed or stopped answering, grey for interrupted. */
+.gauge { position: relative; height: 12px; border-radius: 6px; overflow: hidden; }
+.gauge::before { content: ''; position: absolute; inset: 0; background: var(--spectrum); opacity: 0.2; }
+.gauge i { --p: 0%; position: absolute; inset: 0; background: var(--spectrum);
+  clip-path: inset(0 calc(100% - var(--p)) 0 0 round 6px); transition: clip-path 0.5s linear; }
+.gauge[data-state="ended"]::before, .gauge[data-state="ended"] i { background: var(--accent); }
+/* the running epoch, one segment per phase, each as wide as its share of the steps */
+.phases { display: flex; gap: 4px; height: 4px; margin-top: 8px; }
+.seg { --ink: var(--c1); flex: 1 1 0; min-width: 4px; overflow: hidden; border-radius: 2px;
+  background: color-mix(in srgb, var(--ink) 26%, transparent); }
+.seg b { display: block; width: 0; height: 100%; border-radius: 2px; background: var(--ink); transition: width 0.5s linear; }
+.phase-keys { display: flex; flex-wrap: wrap; gap: 4px 16px; margin-top: 12px; font-size: 0.8125rem; color: var(--dim); }
 
-/* ── Header — an instrument nameplate, ink on the housing ──── */
-.top { display: flex; align-items: center; gap: 18px; padding: 28px 0 24px; flex-wrap: wrap; }
-.brand { display: flex; flex-direction: column; gap: 5px; }
-.brand-link { display: inline-flex; align-items: center; gap: 9px; width: fit-content;
-  color: inherit; text-decoration: none; }
-/* gradient wordmark — the display spectrum flowing through the nameplate */
-.brand-name { font-family: var(--mono); font-size: 1.42rem; font-weight: 600;
-  letter-spacing: -0.02em; line-height: 1;
-  background-image: linear-gradient(100deg, var(--g1), var(--g4) 50%, var(--g7));
-  -webkit-background-clip: text; background-clip: text; color: transparent; }
-.gh { width: 18px; height: 18px; margin-top: 1px; }
-.gh path { fill: var(--faint); transition: fill 0.2s var(--ease); }
-.brand-link:hover .gh path { fill: var(--text); }
-.top-meta { display: flex; gap: 22px; margin-left: auto; flex-wrap: wrap; }
-.top-meta span { display: inline-flex; align-items: baseline; gap: 8px; }
-.top-meta b { color: var(--dim); font-weight: 500; font-family: var(--mono); font-size: 0.78rem;
-  font-variant-numeric: tabular-nums; }
-.pill { display: inline-flex; align-items: center; gap: 7px; padding: 6px 14px; border-radius: 100px;
-  white-space: nowrap; font-family: var(--mono); font-size: 0.64rem; font-weight: 600;
-  letter-spacing: 0.1em; text-transform: uppercase;
-  color: var(--accent); background: color-mix(in srgb, var(--accent) 9%, transparent);
-  border: 1px solid color-mix(in srgb, var(--accent) 26%, transparent);
-  transition: color 0.5s var(--ease), background 0.5s var(--ease), border-color 0.5s var(--ease); }
-.pill .dot { width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
-.pill.live .dot { animation: pulse 1.8s var(--ease) infinite; }
-@keyframes pulse {
-  0%   { box-shadow: 0 0 0 0 color-mix(in srgb, var(--accent) 45%, transparent); }
-  70%  { box-shadow: 0 0 0 5px transparent; }
-  100% { box-shadow: 0 0 0 0 transparent; }
-}
-.tbtn { width: 32px; height: 32px; display: inline-flex; align-items: center; justify-content: center;
-  border-radius: 8px; border: 1px solid transparent; background: none; color: var(--faint); cursor: pointer;
-  transition: color 0.2s var(--ease), border-color 0.2s var(--ease); }
-.tbtn:hover { color: var(--text); border-color: var(--line-2); }
-.tbtn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
-.tbtn svg { width: 16px; height: 16px; }
-.tbtn .i-moon { display: none; }
-[data-theme="light"] .tbtn .i-moon { display: block; }
-[data-theme="light"] .tbtn .i-sun { display: none; }
+/* ── Body — a rail of readings beside the history ───────────── */
+.body { display: grid; grid-template-columns: 340px minmax(0, 1fr);
+  grid-template-areas: "vitals history" "record history"; grid-template-rows: auto 1fr;
+  gap: 16px; }
+.vitals  { grid-area: vitals; }
+.history { grid-area: history; min-width: 0; }
+.record  { grid-area: record; }
+.vitals, .record { display: grid; grid-template-columns: minmax(0, 1fr); gap: 16px; align-content: start; min-width: 0; }
 
-/* ── Hero — the instrument fascia: gauge centred, signal-rich flanks ── */
-.hero { display: flex; justify-content: center;
-  background: var(--panel); border: 1px solid var(--line); border-radius: 14px;
-  box-shadow: var(--edge), var(--shadow);
-  padding: clamp(28px, 3.4vw, 46px) clamp(20px, 3.2vw, 54px); }
-/* KPI grid incl. learning rate + GPU (left) · overall gauge (centre) · live
-   step-loss strip chart (right). The flanks stretch to the gauge's height, so
-   the width either side of the gauge carries signal instead of empty margin. */
-.hero-grid { display: grid; grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
-  align-items: stretch; gap: clamp(20px, 2.8vw, 56px); width: 100%; margin: 0 auto; }
-.hero-center { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 18px;
-  min-width: 0; padding: 2px clamp(16px, 2vw, 40px);
-  border-left: 1px solid var(--line); border-right: 1px solid var(--line); }
-/* flanks vertically centre their content against the gauge; the strip chart
-   (right) carries flex:1 so it fills the gauge's full height */
-.hero-side { display: flex; flex-direction: column; justify-content: center;
-  gap: clamp(18px, 2.2vw, 30px); min-width: 0; }
-/* a uniform 2-column KPI grid — loss · best, throughput · ETA, learning rate ·
-   GPU memory — six peer cells, no separate strip */
-.kpi-grid { display: grid; grid-template-columns: 1fr 1fr;
-  gap: clamp(18px, 2.4vw, 32px) clamp(20px, 2.8vw, 48px); min-width: 0; }
+/* a key is a dot in a phase's ink and that phase's name — the name may wrap, the dot stays on its first line */
+.key { display: inline-flex; align-items: baseline; gap: 8px; min-width: 0; }
+.key i { flex: none; width: 8px; height: 8px; border-radius: 50%; transform: translateY(-1px); }
+.key b { flex: none; font-weight: 600; color: var(--text); }
 
-/* concentric gauge — outer ring = overall run, drawn in ink (the pen's own
-   colour) and crowned gold once the run completes; inner ring = live phase
-   steps in the phase ink. A fine machined tick bezel rings both. */
-.gauge { position: relative; width: clamp(248px, 25vw, 304px); aspect-ratio: 1; }
-.gauge svg { width: 100%; height: 100%; transform: rotate(-90deg); }
-.g-bg, .g-ring { fill: none; }
-.g-bg { stroke: color-mix(in srgb, var(--text) 8%, transparent); }
-.g-ring { stroke-linecap: round;
-  transition: stroke-dashoffset 0.6s var(--ease), stroke 0.5s var(--ease), opacity 0.3s var(--ease); }
-.g-ring.run  { stroke: url(#ringGrad); stroke-width: 13; }   /* overall run sweeps the display spectrum */
-.g-ring.run.done { stroke: var(--st-completed); }            /* the whole run is complete — crown the outer ring gold */
-.rs1 { stop-color: var(--g1); } .rs2 { stop-color: var(--g2); } .rs3 { stop-color: var(--g3); }
-.rs4 { stop-color: var(--g4); } .rs5 { stop-color: var(--g5); } .rs6 { stop-color: var(--g6); }
-.rs7 { stop-color: var(--g7); } .rs8 { stop-color: var(--g8); }
-.g-ring.step { stroke: var(--phasecol); stroke-width: 7; }   /* live phase's steps; gold in the gaps between phases, blank at run end */
-/* machined bezel (72 hairline ticks), epoch divider ticks, gold best-epoch ★ */
-.g-bezel line { stroke: color-mix(in srgb, var(--text) 14%, transparent); stroke-width: 1; }
-.g-tick { stroke: color-mix(in srgb, var(--text) 30%, transparent); stroke-width: 1.5; stroke-linecap: round; }
-.g-best { fill: var(--gold); font-size: 14px; font-weight: 700; text-anchor: middle;
-  dominant-baseline: central; font-family: var(--sans);
-  filter: drop-shadow(0 0 3px color-mix(in srgb, var(--gold) 55%, transparent)); }
-.gauge-center { position: absolute; inset: 0; display: flex; flex-direction: column;
-  align-items: center; justify-content: center; }
-.g-pct { display: flex; align-items: baseline; gap: 3px; font-family: var(--mono);
-  font-variant-numeric: tabular-nums; }
-.g-pct b { font-size: 3.8rem; font-weight: 600; letter-spacing: -0.02em; line-height: 1; }
-.g-pct span { font-size: 1.3rem; color: var(--dim); }
-.gauge-center i { font-style: normal; font-family: var(--mono); font-size: 0.62rem;
-  font-weight: 500; letter-spacing: 0.14em; text-transform: uppercase;
-  color: var(--faint); margin-top: 9px; }
+.label { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0 8px; font-size: 0.875rem; color: var(--dim); }
+.best-value { margin-top: 4px; font-size: 2.5rem; font-weight: 600; letter-spacing: -0.03em; line-height: 1.1;
+  font-variant-numeric: normal; }
+.note { margin-top: 8px; font-size: 0.8125rem; color: var(--dim); text-wrap: pretty; }
+.live-head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
+.live-now { flex: none; font-weight: 600; }
+.live-plot { height: 124px; margin-top: 12px; }
+.live-plot svg { display: block; width: 100%; height: 100%; }
+/* a list of readings: the name may take what it needs and wrap, the value keeps its line */
+.facts { display: grid; grid-template-columns: minmax(0, 1fr) auto; font-size: 0.875rem; }
+.live .facts { margin-top: 16px; }
+.fact { display: contents; }
+.facts dt, .facts dd { padding: 8px 0; border-top: 1px solid var(--grid); }
+.facts dt { color: var(--dim); }
+.facts dd { max-width: 100%; padding-left: 16px; text-align: right; font-weight: 500; }
+.more { grid-column: 1 / -1; justify-self: start; margin: 4px 0 8px; }
+/* the meter's track is its own fill, thinned — the level reads along the whole bar */
+.meter { --m: var(--tone); grid-column: 1 / -1; height: 4px; margin: 0 0 8px; border-radius: 2px;
+  overflow: hidden; background: color-mix(in srgb, var(--m) 24%, transparent); }
+.meter i { display: block; width: 0; height: 100%; border-radius: 2px; background: var(--m); transition: width 0.5s linear; }
+.meter[data-level="high"] { --m: var(--st-stopped); }
 
-/* phase / epoch / step readout under the gauge */
-.hero-meta { display: flex; align-items: center; justify-content: center; gap: 16px; flex-wrap: wrap;
-  font-size: 0.86rem; color: var(--dim); font-variant-numeric: tabular-nums; }
-.hero-meta b { color: var(--text); font-weight: 500; font-family: var(--mono); }
-.hm-sep { color: var(--faint); }
-.hm-phase { font-style: normal; padding: 2px 10px; border-radius: 100px;
-  font-family: var(--mono); font-size: 0.6rem; font-weight: 600;
-  letter-spacing: 0.1em; text-transform: uppercase; white-space: nowrap; }
-.hm-phase.is-train { color: var(--st-training);
-  background: color-mix(in srgb, var(--st-training) 10%, transparent);
-  border: 1px solid color-mix(in srgb, var(--st-training) 26%, transparent); }
-.hm-phase.is-eval { color: var(--st-evaluating);
-  background: color-mix(in srgb, var(--st-evaluating) 10%, transparent);
-  border: 1px solid color-mix(in srgb, var(--st-evaluating) 26%, transparent); }
-
-/* ── KPI cells — a uniform grid; engraved capitals label ink numerals ── */
-.kpi { min-width: 0; max-width: 100%; overflow: hidden; }   /* a long value clips, never overlaps a neighbour */
-.k-label { display: block; margin-bottom: 8px;
-  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.k-val { display: flex; align-items: baseline; gap: 8px; font-family: var(--mono);
-  font-size: 1.5rem; font-weight: 500;
-  font-variant-numeric: tabular-nums; white-space: nowrap; }
-.k-val .star { color: var(--gold); font-size: 0.92rem; }
-.k-val .k-note { font-size: 0.8rem; font-weight: 400; color: var(--dim); }
-/* a multi-group LR range is a longer string — step the value down so it never
-   collides with the neighbouring cell */
-.k-val.is-range { font-size: 1.08rem; }
-.k-sub { margin-top: 5px; font-size: 0.72rem; color: var(--faint); font-family: var(--mono);
-  font-variant-numeric: tabular-nums; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-/* GPU-memory usage bar — sits where the sub line would, fills with the used /
-   total ratio and turns red near capacity so memory pressure is obvious */
-.kpi .gbar { margin-top: 10px; height: 5px; border-radius: 100px; overflow: hidden;
-  background: color-mix(in srgb, var(--text) 9%, transparent); }
-.kpi .gbar i { display: block; height: 100%; width: 0%; border-radius: inherit; background: var(--good);
-  transition: width 0.5s var(--ease), background 0.4s var(--ease); }
-
-/* ── Strip chart — the live per-step loss for the active phase, filling the
-   opposite flank on its own. The pen head sits fixed at the right edge and
-   the paper scrolls beneath it: each sample advances the trace one fixed
-   step, in the phase's ink. Shown only while a step is in progress, in step
-   with the throughput / ETA readouts. ── */
-.stepgraph { flex: 1; display: flex; flex-direction: column; gap: 9px; min-width: 0; }
-.sg-head { display: flex; align-items: baseline; gap: 11px; }
-.sg-head .hm-phase { padding: 1px 8px; }
-.sg-body { position: relative; flex: 1; min-height: clamp(118px, 15vw, 188px); width: 100%; }
-.sg-body svg { display: block; width: 100%; height: 100%; }
-.spark-empty { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
-  font-family: var(--mono); font-size: 0.72rem; color: var(--faint); letter-spacing: 0.02em; }
-.sg-foot { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 2px 14px;
-  font-family: var(--mono); font-size: 0.68rem; color: var(--faint); font-variant-numeric: tabular-nums; }
-
-/* ── Charts — recorder sheets: ink traces over true graph paper.
-      The grid (and its top margin) only exist once a chart is mounted, so no
-      empty placeholder reserves space before the first epoch. ── */
-.charts { display: block; }
-.grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 18px; margin-top: 18px; }
-.grid:empty { display: none; }
-/* a lone trailing chart (odd count) is centred instead of leaving an empty cell */
-.grid > .chart:last-child:nth-child(odd) { grid-column: 1 / -1; justify-self: center; width: calc(50% - 9px); }
-.chart { position: relative; background: var(--panel); border: 1px solid var(--line); border-radius: 12px;
-  box-shadow: var(--edge), var(--shadow); padding: 16px 18px 12px;
-  transition: border-color 0.35s var(--ease);
-  animation: rise 0.5s var(--ease) both; }
-/* hover — the border warms to gold, the same note of excellence as the best ★
-   and a completed run; the sheet itself holds perfectly still */
-.chart:hover { border-color: color-mix(in srgb, var(--gold) 45%, var(--line-2)); }
-.hovdot { transition: cx 0.09s linear, cy 0.09s linear; }
-.chart-head { display: flex; align-items: center; gap: 12px; margin-bottom: 10px; }
-.chart-name { font-size: 0.9rem; font-weight: 600; letter-spacing: -0.01em; }
-.legend { display: inline-flex; gap: 11px; margin-left: 2px; font-size: 0.74rem; color: var(--dim); }
-.legend span { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
-.legend i { width: 13px; height: 3px; border-radius: 2px; }   /* a trace segment, not a dot */
-.chart-acts { margin-left: auto; display: inline-flex; gap: 6px; opacity: 0; transition: opacity 0.2s var(--ease); }
-.chart:hover .chart-acts, .chart-acts:focus-within { opacity: 1; }
-.cbtn { font-family: var(--mono); font-size: 0.66rem; font-weight: 600; letter-spacing: 0.04em;
-  display: inline-flex; align-items: center; gap: 5px; padding: 4px 10px; border-radius: 6px; cursor: pointer;
-  color: var(--dim); background: none; border: 1px solid var(--line);
-  transition: color 0.2s var(--ease), border-color 0.2s var(--ease), background 0.2s var(--ease); }
-.cbtn:hover { color: var(--text); border-color: var(--line-2); }
-.cbtn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
-.cbtn.on { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 35%, transparent);
-  background: color-mix(in srgb, var(--accent) 8%, transparent); }
-.chart-body svg { display: block; width: 100%; height: auto; }
-
-/* ── Run details — configuration · environment · model ────── */
-.meta { display: grid; grid-template-columns: repeat(3, 1fr); column-gap: 0; row-gap: 26px;
-  background: var(--panel); border: 1px solid var(--line); border-radius: 12px;
-  box-shadow: var(--edge), var(--shadow);
-  padding: 24px clamp(12px, 1.6vw, 22px) 20px; margin-top: 18px; }
-/* vertical hairlines divide the three columns */
-.meta > div { padding: 2px clamp(20px, 2.6vw, 40px); }
-.meta > div + div { border-left: 1px solid var(--line); }
-.meta h2 { color: var(--dim); margin-bottom: 12px; }
-.kv { display: flex; flex-direction: column; }
-.kv-row { display: flex; justify-content: space-between; align-items: baseline; gap: 12px;
-  padding: 7px 8px; margin: 0 -8px; border-radius: 6px; font-size: 0.8rem; cursor: pointer; user-select: none;
-  transition: background 0.15s var(--ease); }
+.record h2 { margin-bottom: 8px; }
+/* the record's lists open under a title, which is rule enough for their first row */
+.record .fact:first-child dt, .record .fact:first-child dd { border-top: 0; }
+.kv-row { display: flex; justify-content: space-between; align-items: baseline; gap: 16px;
+  margin: 0 -8px; padding: 8px; border-radius: 8px; font-size: 0.875rem; cursor: pointer;
+  transition: background-color 0.15s; }
 .kv-row:hover { background: var(--hover); }
-.kv-row:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
-.kv-row.copied .kv-v { color: var(--gold); }
-.kv-k { color: var(--dim); flex-shrink: 0; }
-.kv-v { font-family: var(--mono); font-size: 0.76rem; text-align: right; word-break: break-word;
-  font-variant-numeric: tabular-nums; transition: color 0.2s var(--ease); }
-.kv .none { color: var(--faint); font-size: 0.78rem; padding: 4px 0; }
-/* nested configuration — a dict key opens an indented sub-group marked by a
-   hairline guide; scalar leaves stay copyable rows, so a dict / nested-dict
-   learning-rate or scheduler config reads cleanly instead of "[object Object]" */
-.kv-grouphead { font-size: 0.8rem; font-weight: 600; letter-spacing: 0.005em;
-  color: var(--dim); padding: 10px 8px 3px; }
-.kv-nest { margin: 1px 0 3px 7px; padding-left: 12px; border-left: 1px solid var(--line); }
-.kv-nest .kv-grouphead:first-child { padding-top: 4px; }
+/* neither side may starve the other: the name keeps at most half the row */
+.kv-k { flex: 0 1 auto; max-width: 50%; color: var(--dim); }
+.kv-v { flex: 1 1 0; min-width: 0; font-weight: 500; text-align: right; }
+.kv-grouphead { padding: 8px 0 4px; font-size: 0.875rem; font-weight: 500; }
+.kv-nest { margin-left: 2px; padding-left: 12px; border-left: 1px solid var(--grid); }
+.none { font-size: 0.875rem; color: var(--faint); }
 
-/* ── Tooltip · toast · footer ──────────────────────────────── */
-.tip { position: fixed; z-index: 90; pointer-events: none; min-width: 116px; padding: 9px 12px;
-  border-radius: 8px; background: var(--tip-bg); border: 1px solid var(--line-2);
-  box-shadow: var(--shadow); font-size: 0.74rem; opacity: 0; transition: opacity 0.12s var(--ease); }
-.tip.show { opacity: 1; }
-.tip-title { color: var(--faint); font-family: var(--mono); font-weight: 500; font-size: 0.6rem;
-  letter-spacing: 0.1em; text-transform: uppercase; margin-bottom: 5px; }
-.tip-row { display: flex; justify-content: space-between; gap: 14px; padding: 1px 0; }
-.tip-row .tk { display: inline-flex; align-items: center; gap: 6px; color: var(--dim); }
-.tip-row .tk i { width: 8px; height: 8px; border-radius: 50%; }
-.tip-row .tv { font-family: var(--mono); color: var(--text); font-variant-numeric: tabular-nums; }
-.toast { position: fixed; bottom: 26px; left: 50%; transform: translate(-50%, 10px); z-index: 95;
-  padding: 8px 17px; border-radius: 100px; background: var(--tip-bg); border: 1px solid var(--line-2);
-  color: var(--gold); font-size: 0.76rem; font-weight: 600; opacity: 0; pointer-events: none;
-  box-shadow: var(--shadow); transition: opacity 0.2s var(--ease), transform 0.2s var(--ease); }
-.toast.show { opacity: 1; transform: translate(-50%, 0); }
-footer { padding: 36px 0 0; text-align: center; }
+/* ── Charts — one panel per metric ──────────────────────────── */
+.empty { color: var(--dim); }
+/* two abreast wherever each can be 400px wide, and never three: a third column
+   leaves the usual four metrics as a row of three and an orphan */
+.charts { display: grid; gap: 16px;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, max(400px, 50% - 8px)), 1fr)); }
+.chart { padding-bottom: 16px; }
+/* the key may wrap under the title; the scale toggle keeps its corner either way */
+.chart-head { display: flex; align-items: flex-start; gap: 12px; margin-bottom: 8px; }
+.chart-lead { display: flex; align-items: baseline; flex-wrap: wrap; gap: 4px 16px; min-width: 0; min-height: 28px; padding-top: 2px; }
+.legend { display: flex; flex-wrap: wrap; gap: 4px 16px; min-width: 0; font-size: 0.875rem; color: var(--dim); }
+.legend[data-stack] { flex-basis: 100%; }
+.chart-tools { flex: none; margin-left: auto; }
+.toggle { padding: 4px 12px; font: inherit; font-size: 0.8125rem; font-weight: 500; color: var(--dim); white-space: nowrap;
+  background: var(--hover); border: 0; border-radius: 999px; cursor: pointer; }
+.toggle:hover { color: var(--text); }
+.toggle[aria-pressed="true"] { color: var(--text); background: color-mix(in srgb, var(--tone) 28%, transparent); }
+.chart-body { cursor: crosshair; touch-action: pan-y; }
+.chart-body svg { display: block; width: 100%; height: auto; overflow: visible; }
+.tick { fill: var(--faint); font-size: 11.5px; }
+.gridline { stroke: var(--grid); stroke-width: 1; }
+.bestline, .hovline { stroke: var(--faint); stroke-width: 1; }
+.besttext, .hovtext { fill: var(--dim); font-size: 11.5px; }
+.hovtext { fill: var(--text); font-weight: 500; }
+.series { fill: none; stroke-width: 2.5; stroke-linejoin: round; stroke-linecap: round; }
+.wash { stroke: none; }
+.raw { fill: none; stroke-width: 1; stroke-linejoin: round; opacity: 0.45; }
+.enddot, .hovdot, .lonedot { stroke: var(--panel); stroke-width: 2; }
 
-@media (max-width: 1080px) {
-  /* stack: gauge on top, then the KPI grid, then the strip chart */
-  .hero-grid { display: flex; flex-direction: column; align-items: stretch; gap: 28px; max-width: 560px; }
-  .hero-center { order: -1; border: 0; padding: 0; }
-  .hero-side { gap: 20px; }
-  .stepgraph { flex: none; }
+/* ── Epoch table — the numbers the charts draw ──────────────── */
+.epochs { margin-top: 16px; }
+.section-head { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 16px; margin-bottom: 12px; }
+.section-head .note { margin: 0; }
+.table-wrap { max-height: 440px; overflow: auto; scrollbar-width: thin; }
+table { width: 100%; border-collapse: separate; border-spacing: 0; font-size: 0.875rem; overflow-wrap: normal; }
+th, td { padding: 8px 12px; text-align: right; white-space: nowrap; border-bottom: 1px solid var(--grid); background: var(--panel); }
+/* the epoch stays put while the metrics scroll beneath it */
+thead tr:first-child th:first-child, td:first-child { position: sticky; left: 0; z-index: 1; padding-left: 0; text-align: left; }
+thead th { position: sticky; top: 0; z-index: 2; height: 36px; font-weight: 400; color: var(--dim); vertical-align: bottom; }
+thead tr + tr th { top: 36px; }
+thead tr:first-child th:first-child { z-index: 3; }
+/* a metric's name stands over its first column, on the right edge its numbers keep */
+.grp { border-bottom: 0; color: var(--text); font-weight: 600; }
+.grp-start { padding-left: 32px; }
+/* a long name is cut short in a column head — the chart's key above spells it out */
+th .key { max-width: 18ch; }
+th .key span, .grp span { display: block; max-width: 28ch; overflow: hidden; text-overflow: ellipsis; }
+/* hung from the column's right edge rather than laid out in it, so that a long
+   name reaches back over the empty heads to its left instead of widening its
+   column */
+.grp span { position: absolute; right: 12px; bottom: 8px; }
+.grp:last-child span { right: 0; }
+/* the last column ends where the rules do */
+th:last-child, td:last-child { padding-right: 0; }
+tbody tr:hover td, tr[data-hover] td { background: color-mix(in srgb, var(--text) 7%, var(--panel)); }
+tr[data-best] td { font-weight: 600; background: color-mix(in srgb, var(--mon) 14%, var(--panel)); }
+.tag { margin-left: 8px; padding: 0 8px; font-size: 0.8125rem; font-weight: 600; color: var(--panel);
+  border-radius: 999px; background: var(--mon); }
+
+@media (max-width: 1000px) {
+  /* one column: the readings, then the history, then the run's record */
+  .body { grid-template-columns: minmax(0, 1fr); grid-template-areas: "vitals" "history" "record"; }
 }
-@media (max-width: 1040px) {
-  .meta { grid-template-columns: 1fr 1fr; }
-  /* the third column wraps to a full-width row — divide it with a rule above */
-  .meta > div:nth-child(3) { grid-column: 1 / -1; border-left: 0; border-top: 1px solid var(--line); padding-top: 24px; }
-}
-@media (max-width: 720px) {
-  .grid { grid-template-columns: 1fr; }
-  .meta { grid-template-columns: 1fr; }
-  .meta > div { border-left: 0; }
-  .meta > div + div { border-top: 1px solid var(--line); padding-top: 24px; }
-  .meta > div:nth-child(3) { grid-column: auto; }
-  .top { gap: 12px; }
-  .brand-name { font-size: 1.22rem; }
-  .top-meta { order: 4; width: 100%; margin-left: 0; }
-  .pill { margin-left: auto; }
-  .gauge { width: 214px; }
-  .g-pct b { font-size: 3rem; }
-  .g-pct span { font-size: 1.05rem; }
-}
-@media (max-width: 460px) {
-  .k-val { font-size: 1.26rem; }
-  .kpi-grid { gap: 16px 24px; }
+@media (max-width: 640px) {
+  .run-time { text-align: left; }
+  .ver { display: none; }
+  .tool span { display: none; }   /* icon-only tools; the title still names them */
+  .panel { padding: 16px; border-radius: 16px; }
 }
 @media (prefers-reduced-motion: reduce) {
-  *, *::before, *::after { animation: none !important; transition-duration: 0.01ms !important; }
+  *, *::before, *::after { transition-duration: 0.01ms !important; animation: none !important; }
 }

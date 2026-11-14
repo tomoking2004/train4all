@@ -9,6 +9,7 @@ also what makes a regression in one invisible. So this file does bind a loopback
 does call `open_browser` — against stand-ins, and never against a real browser.
 """
 
+import contextlib
 import http.server
 import json
 import subprocess
@@ -200,15 +201,18 @@ def test_the_keepalive_refreshes_the_timestamp_without_being_asked(tmp_path):
     dash = Dashboard(config, tmp_path)
     dash.initialize({})
     written = tmp_path / config.data_filename
-    first = json.loads(written.read_text(encoding="utf-8"))["last_update_ms"]
 
-    latest = first
+    # Windows refuses to open a file in the instant another thread is replacing it,
+    # and the keepalive replaces this one every 20 ms. A read that loses that race
+    # is no verdict on the thread: like the browser's failed fetch, it is retried.
+    stamps: set[int] = set()
     deadline = time.monotonic() + 5
-    while latest == first and time.monotonic() < deadline:
+    while len(stamps) < 2 and time.monotonic() < deadline:
+        with contextlib.suppress(PermissionError):
+            stamps.add(json.loads(written.read_text(encoding="utf-8"))["last_update_ms"])
         time.sleep(0.02)
-        latest = json.loads(written.read_text(encoding="utf-8"))["last_update_ms"]
 
-    assert latest > first, "the keepalive thread never refreshed the payload"
+    assert len(stamps) >= 2, "the keepalive thread never refreshed the payload"
 
 
 def test_the_keepalive_has_nothing_to_refresh_before_the_first_snapshot(dash, config, tmp_path):

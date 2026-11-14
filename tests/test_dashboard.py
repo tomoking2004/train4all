@@ -89,6 +89,99 @@ def test_finalize_embeds_the_data_so_the_page_survives_the_process(dash, config,
     assert embedded["epoch_metrics"]["loss"]["train"] == [0.5, 0.4, 0.3]
 
 
+def test_a_run_that_fails_says_so_and_says_why(dash, config, tmp_path):
+    """A run that dies with an exception must not go quiet and be declared *Offline*
+    half a minute later: it had the chance to say what happened, so it says it."""
+    dash.initialize({}, phases=SCHEDULE)
+    dash.update(2, 5, {"loss": {"train": [0.9]}}, 0.9, 1, step=7, max_step=10,
+                step_metrics={"loss": 0.8}, phase_name="train")
+    dash.finalize(2, 5, {"loss": {"train": [0.9]}}, 0.9, 1, error=RuntimeError("CUDA out of memory"))
+    d = payload(tmp_path, config)
+
+    assert d["status"] == "failed"
+    assert d["error"] == "RuntimeError: CUDA out of memory"
+    assert (d["current_step"], d["max_step"], d["last_phase"]) == (7, 10, "train"), \
+        "a run cut short is shown where it stopped, not at the end of a phase it never finished"
+    assert not dash.active
+
+
+def test_ctrl_c_is_recorded_as_an_interruption(dash, config, tmp_path):
+    dash.initialize({}, phases=SCHEDULE)
+    dash.finalize(1, 5, error=KeyboardInterrupt())
+    d = payload(tmp_path, config)
+
+    assert d["status"] == "interrupted"
+    assert d["error"] == "KeyboardInterrupt", "an exception with no message is named, with no dangling colon"
+
+
+def test_a_completed_run_carries_no_error(dash, config, tmp_path):
+    dash.initialize({})
+    dash.finalize(3, 3)
+
+    assert payload(tmp_path, config)["error"] is None
+
+
+def test_the_failure_is_embedded_so_the_page_still_says_it_after_the_process_is_gone(dash, config, tmp_path):
+    dash.initialize({})
+    dash.finalize(1, 3, error=ValueError("bad batch"))
+
+    html = (tmp_path / config.filename).read_text(encoding="utf-8")
+    _, _, tail = html.partition("window.__TRAIN4ALL_DATA__=")
+    embedded = json.loads(tail.partition(";</script>")[0], parse_constant=_reject)
+    assert (embedded["status"], embedded["error"]) == ("failed", "ValueError: bad batch")
+
+
+def test_text_from_the_run_cannot_close_the_embedded_script(dash, config, tmp_path):
+    """The final data is inlined in a `<script>`, where the HTML parser decides where the
+    element ends. An error message quoting a web page is enough to carry `</script>` —
+    which, unescaped, ends the block early and spills the rest of the JSON onto the page."""
+    hostile = "502 Bad Gateway: <html><script>alert(1)</script><!-- x --></html>"
+    dash.initialize({"note": hostile})
+    dash.finalize(1, 3, error=RuntimeError(hostile))
+
+    html = (tmp_path / config.filename).read_text(encoding="utf-8")
+    _, _, tail = html.partition("window.__TRAIN4ALL_DATA__=")
+    blob = tail.partition(";</script>\n</head>")[0]
+    assert "</script" not in blob and "<!--" not in blob, "the payload can end its own script element"
+    assert json.loads(blob, parse_constant=_reject)["error"] == f"RuntimeError: {hostile}", \
+        "the escaping must read back as the same text"
+
+
+def test_a_retry_on_the_same_dashboard_opens_clean(dash, config, tmp_path):
+    """A run that failed and is tried again in the same process is a new run: the page
+    must not open on the old error, the old position, or a heartbeat that stays stopped."""
+    dash.initialize({}, phases=SCHEDULE)
+    dash.update(2, 5, step=7, max_step=10, step_metrics={"loss": 0.8}, phase_name="train",
+                learning_rate=0.1, gpu_mem=(1.0, 8.0))
+    dash.finalize(2, 5, error=RuntimeError("boom"))
+
+    dash.initialize({}, phases=SCHEDULE)
+    d = payload(tmp_path, config)
+    assert (d["status"], d["error"], d["step_loss"]) == ("training", None, [])
+    assert (d["learning_rate"], d["gpu_mem_used"], d["gpu_mem_total"]) == (None, None, None), (
+        "the old run's last readings would stand in the rail before the retry's first step"
+    )
+    assert not dash._keepalive_stop.is_set(), "the retried run would have no heartbeat"
+
+    dash.finalize(1, 5, error=RuntimeError("again"))
+    d = payload(tmp_path, config)
+    assert (d["current_step"], d["max_step"], d["last_phase"]) == (0, 0, ""), (
+        "the retry never reported a step, so it has no position to inherit"
+    )
+
+
+def test_a_run_cut_short_keeps_the_step_with_its_own_phases_length(dash, config, tmp_path):
+    """A length-less phase after a sized one: its step must not be shown against the
+    other phase's length ("step 900 of 620")."""
+    dash.initialize({}, phases=SCHEDULE)
+    dash.update(1, 5, step=620, max_step=620, step_metrics={"loss": 0.5}, phase_name="train")
+    dash.update(1, 5, step=900, max_step=0, step_metrics={"loss": 0.5}, phase_name="stream")
+    dash.finalize(1, 5, error=RuntimeError("boom"))
+    d = payload(tmp_path, config)
+
+    assert (d["current_step"], d["max_step"], d["last_phase"]) == (900, 0, "stream")
+
+
 # ── The payload ───────────────────────────────────────────────────────────────
 
 
@@ -115,7 +208,7 @@ def test_update_publishes_the_live_state(dash, config, tmp_path):
 
 
 def test_the_schedule_rides_along_in_the_payload(dash, config, tmp_path):
-    """The phase list is the dashboard's whole model of an epoch — it lays out the gauge."""
+    """The phase list is the dashboard's whole model of an epoch — it lays out the epoch bar."""
     dash.initialize({}, phases=SCHEDULE)
     dash.update(1, 5)
 
@@ -264,16 +357,12 @@ def test_elapsed_runs_from_mark_started(dash):
 
 
 # ── The Python ↔ JavaScript seam ──────────────────────────────────────────────
-# The browser half of the dashboard is ~1,400 lines of CSS and JavaScript in `style.css`
+# The browser half of the dashboard is ~1,200 lines of CSS and JavaScript in `style.css`
 # and `shell.html`, so no Python test executes it and coverage cannot even see it. What
 # actually rots across that seam is not the algorithm — it is the *names*: rename a
 # payload key on the Python side, or an element id in the shell, and the script silently
 # reads `undefined` forever. The page does not crash; it just goes blank. These tests are
 # the name chain, checked statically — no browser required.
-
-# The toast is the one element the script creates for itself, on first use.
-SELF_CREATED_IDS = {"toast"}
-
 
 def test_every_payload_key_the_script_reads_is_one_the_dashboard_writes(dash, config, tmp_path):
     dash.initialize({}, phases=SCHEDULE)
@@ -297,7 +386,7 @@ def test_every_element_the_script_drives_exists_in_the_shell():
     driven = set(re.findall(r"(?:el|setText|renderKV)\(\s*'([a-z0-9_-]+)'", _HTML_SHELL))
     present = set(re.findall(r'id="([a-z0-9_-]+)"', _HTML_SHELL))
 
-    missing = sorted(driven - SELF_CREATED_IDS - present)
+    missing = sorted(driven - present)
     assert not missing, f"the script drives elements the shell does not define: {missing}"
 
 
@@ -310,7 +399,7 @@ def test_every_element_the_script_drives_exists_in_the_shell():
 
 TOKEN_DEFINITION = re.compile(r"(--[a-z0-9-]+)\s*:")
 
-# `setMode` composes its ink name at runtime — `var('--st-' + mode + ')'` — so the
+# `setAccent` composes its ink name at runtime — `'var(--st-' + mode + ')'` — so the
 # literal the regexes below see is this stem rather than any real token. The status
 # test is what covers that family.
 COMPOSED_STEM = "--st-"
@@ -359,8 +448,8 @@ def test_the_stylesheet_declares_nothing_the_page_never_reads():
 
 def test_every_class_the_stylesheet_styles_is_one_the_shell_can_wear():
     """A selector nothing can match is not dead weight — it is a style that silently does
-    not apply. `.g-bezel line` was exactly that: the gauge's 72 tick marks hang under an
-    element carrying `id="g-bezel"` and no class, so the bezel drew and never painted.
+    not apply. `.g-bezel line` was once exactly that: tick marks hung under an element carrying
+    `id="g-bezel"` and no class, so they drew and never painted.
     Only this direction is checked; a class the shell wears may be styled by an id or an
     element rule, so the reverse would flag what is merely a query handle.
     """
@@ -378,14 +467,22 @@ def test_every_class_the_stylesheet_styles_is_one_the_shell_can_wear():
     assert not unmatched, f"the stylesheet styles classes the shell never wears: {unmatched}"
 
 
-def test_every_status_the_script_can_show_has_an_ink_in_both_themes():
-    """`setMode` builds `--st-<mode>` from the mode it computed. A mode with no matching
-    token blanks the accent colour — the pill, the gauge, and the runline all go grey."""
+def test_every_status_a_run_can_rest_in_has_an_ink_in_both_themes():
+    """`setAccent` builds `--st-<mode>` from the mode the page is in, unless the run is
+    moving — then the status wears the running phase's ink. A resting mode with no matching
+    token blanks the accent colour: the status dot, the run bar and the favicon lose their
+    ink. A token for a moving mode is the reverse fault, a colour nothing can show."""
     labels = re.search(r"MODE_LABEL = \{(.*?)\};", _HTML_SHELL, re.S)
     assert labels, "the script no longer declares MODE_LABEL"
     modes = set(re.findall(r"(\w+):\s*'", labels.group(1)))
     assert modes, "MODE_LABEL parsed as empty"
 
+    live = re.search(r"const isLive = \(mode\) => (.*?);", _HTML_SHELL)
+    assert live, "the script no longer declares isLive"
+    moving = set(re.findall(r"'(\w+)'", live.group(1)))
+    assert moving and moving < modes, f"isLive names modes MODE_LABEL does not: {sorted(moving - modes)}"
+
     for theme in (':root, [data-theme="dark"]', '[data-theme="light"]'):
         inks = {t.removeprefix(COMPOSED_STEM) for t in theme_tokens(theme) if t.startswith(COMPOSED_STEM)}
-        assert modes == inks, f"{theme} and MODE_LABEL disagree on: {sorted(modes ^ inks)}"
+        resting = modes - moving
+        assert resting == inks, f"{theme} and the resting modes disagree on: {sorted(resting ^ inks)}"

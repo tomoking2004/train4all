@@ -3,7 +3,7 @@ Self-contained HTML training dashboard for train4all.
 
 Architecture
 ────────────
-  DashboardConfig  - immutable settings (poll interval, filenames, …)
+  DashboardConfig  - settings (poll interval, filenames, …)
   Dashboard        - writes a static HTML shell once on initialize(), then
                      writes a small JSON data file on every update(). Browser
                      JavaScript polls that JSON and patches the DOM in place —
@@ -11,66 +11,100 @@ Architecture
 
 Design
 ──────
-A laboratory chart recorder. Training curves are ink traces on engineering
-graph paper — a two-tier grid behind every plot — and the live step-loss is a
-strip chart whose pen head sits fixed at the right edge while the paper
-scrolls beneath it. Light theme is the drafting room by day; dark is the
-instrument room at night. IBM Plex Mono carries the wordmark and every number
-and axis, engraved-style letterspaced capitals label the readouts, and IBM
-Plex Sans carries prose. Matte panels and precise hairlines — no glass. A
-vivid display spectrum (gradient wordmark, gauge ring, runline, and three
-quiet ambient washes) carries the colour the data inks deliberately restrain.
+Two planes: the page, and panels raised off it by fill alone — no border, no
+shadow. One colour family, blue through violet to rose, and one colour per
+meaning, so the same hue never says two things: a phase is its ink wherever
+that phase appears; the run as a whole is the spectrum between the first two
+inks; the violet between them is the page's own voice — a control that is on, a
+level; gold is a run that finished, and nothing else; and red is the one alarm.
+The neutrals lean toward the family's blue, so the inks sit on them rather than
+against them. The one typeface (Instrument Sans, falling back to the system
+sans offline) sets every number that ticks in tabular figures.
 
-A large progress gauge anchors the page — concentric rings inside a fine
-machined tick bezel (outer = overall run, sweeping the display spectrum and
-crowned gold once the run completes; inner = the live phase's steps, gold in the
-gaps between phases and blank once the run ends) with the overall percentage at
-its centre, epoch divider ticks, and a gold ★ best-epoch marker on its rim. Run
-progress is strictly monotonic: every phase of the epoch advances it in
-proportion to its share of the epoch's steps, it never rewinds across a phase or
-epoch boundary, and it holds full once the run completes.
+The run opens the page, unboxed. While it is live its headline says, large,
+where the run is and, opposite, how long is left. Once it has finished that is
+no longer the news — the result is — so the headline steps back to one plain line
+and the best value leads the page: size follows importance. Beneath the
+headline run two bars, and neither grows with the run, so five epochs and fifty
+thousand draw the same page. The upper is the whole run — a window onto that
+spectrum, which shows more of it as the run advances, and takes the colour of
+how the run ended once it has: gold, red, or grey. The lower is the epoch the
+run is in: one segment per phase that runs in it, as wide as that phase's share
+of the epoch's steps and in that phase's colour, so it shows which phase is
+running and how far along. Progress is strictly monotonic: every phase of the
+epoch advances it in proportion to its share of the epoch's steps, and it never
+rewinds across a phase or epoch boundary.
 
-The gauge is flanked by a uniform KPI grid (current metric, best monitored
-value, throughput, ETA, learning rate, and a GPU-memory cell whose bar turns
-red near capacity) and the live step-loss graph (an auto-scaled trace of the
-active phase's recent per-step loss). Instantaneous readings (current metric,
-throughput, ETA, step graph) blank between steps; standing values (best
-monitored value, learning rate, GPU memory) persist.
+A rail of panels stands beside the history. First the best monitored value and
+how long since it improved. Then the live readings: a strip chart of the
+running phase's recent per-step loss (a smoothed line over the raw samples,
+since smoothing alone hides spikes) above the first few of the running step's
+other metrics (the rest open on request), throughput, learning rate, and a
+GPU-memory meter that turns red near capacity. The live readings leave when the
+run completes; a run cut short keeps the last of them it has. Then the run's
+record: when it ran, its configuration, environment, and model. Click a row of
+the last three to copy its value.
 
-Below, every metric gets its own dependency-free SVG chart in a uniform
-two-column grid, the primary (loss) metric first. All charts share the same
-epoch-level history — until the first epoch completes they hold an "awaiting"
-placeholder rather than a one-off per-step view. Each has best-epoch markers,
-lowercase axis titles (``epoch`` · the metric name), a gold hover readout,
-a log-scale toggle, and vector export; they render at their container's exact
-pixel width (a ResizeObserver re-renders on reflow) and gridlines snap to nice
-values — powers of ten on the log scale.
+The history is one dependency-free SVG chart per metric, two abreast, loss
+first, then the monitored metric. A chart's key is also its readout: it shows
+each phase's value at the latest epoch, or at the hovered one. The hover is
+shared between the charts and the table, so pointing at an epoch in either
+reads that epoch in both. The progress bars take no part: they stay where the
+run is. The monitored phase's curve stands on a wash of its own colour; a phase
+that runs only every few epochs is drawn as the points it has. Each chart marks
+the best epoch once the curves have moved past it, offers a log scale when
+every value is positive, and renders at its container's exact pixel width.
+Below them the epoch table lists the numbers the charts draw, grouped by
+metric: the newest two hundred epochs and the best one, with the whole history
+a click away as CSV.
 
-The run declares its phases, and every phase owns a fixed ink on a
-blue→violet→magenta spectrum — train blue, validation violet, test magenta,
-any further phase the next free hue — assigned once from that declared order,
-so a phase keeps its ink in every curve, legend, badge, and gauge ring on the
-page. The inks are validated for colour-vision deficiency (Machado
-protan/deutan ΔE ≥ 12 between adjacent inks, in both themes). Red means offline
-(a plateau keeps the training blue — the gold ★ carries that signal); gold is
-reserved for excellence (best epoch, completed run). No green. A fixed hairline
-across the top of the viewport mirrors overall progress in the same spectrum,
-and turns gold once the run completes.
+Nothing on the page grows with the run or trusts a name to be short. Twenty
+metrics are twenty charts and a table that scrolls sideways under a fixed epoch
+column; a dozen phases wrap their keys and share the inks in rotation; a name
+of any length wraps at its underscores inside its own column, or is cut short
+where a column head cannot wrap, with the whole of it a hover away; counts carry
+their separators, and a duration past a day is told in days.
 
-Configuration, environment, and model tables close the page — nested-dict
-config opens indented sub-groups; click any row to copy its value (a gold flash
-confirms). Light and dark themes are both first-class: the dashboard follows
-the system preference, and a header toggle (or the ``T`` key) persists it.
+The run declares its phases, and every phase owns one colour from a fixed
+categorical order — train blue, validation rose, test plum, any further phase
+the next free slot — assigned once from that declared order, so a phase keeps
+its colour in every curve, key, table column, and epoch-bar segment. The order
+is stepped separately for the light and the dark theme so neighbouring slots
+stay apart under colour-vision deficiency, and text never wears a data colour.
+
+The page says what state the run is in, and why, for as long as anything can
+tell it: training or evaluating; completed; stopped early, with the patience
+that ended it; failed, with the error; interrupted; and — only when the process
+died without a word — *Offline*, with the time of its last update. Silence is
+timed on the browser's own clock, from the last heartbeat it saw change, so a
+run on a remote machine is judged the same whatever the two clocks say. The
+status sits in the top bar — its dot in the ink of the phase that is running,
+or of the state the run came to rest in — and in the favicon, which is a
+progress ring of the same colour: a background tab still says how far the run
+is and whether it is alive. Opted in, the page announces the end once, when the
+run is over or stops answering — a system notification where the browser allows
+one, a chime where it does not, so the opt-in works whatever the browser
+decided about permission. Light and dark themes are both first-class: the page
+follows the system preference, and the toggle (or the ``T`` key) sets a choice.
+The browser keeps that choice, and an opt-in to system notifications, for the
+page's address. A live run is served from a port of its own, so both last for
+that run.
 
 Layout
 ────────────────────────────────────────────────────────────────────
-   ── overall-progress hairline (fixed, top of viewport) ──
-   header   ·  gradient wordmark · started / elapsed · pill · theme
-   hero    loss · best   ┃   ◎ overall gauge   ┃
-           it/s · ETA    ┃   phase·epoch·step  ┃   ▁▂▃▅ step loss
-           lr · gpu      ┃                     ┃   (active phase)
-   metric SVG charts — uniform two-column grid, loss first
-   configuration · environment · model   (click to copy)
+   train4all · version            status · notify · GitHub · theme
+   Epoch 33 of 40                                        9:31 left
+   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━────────   the run
+   ━━━━━━━━━━━━━━━━━━━━━━━━──────────────── ──────   this epoch, by phase
+   ╭ best value ─────╮  ╭ loss ──────────╮ ╭ accuracy ──────╮
+   ╰─────────────────╯  ╰────────────────╯ ╰────────────────╯
+   ╭ step loss ──────╮  ╭ …one chart per metric, two abreast╮
+   │ speed · lr · gpu│  ╰────────────────╯ ╰────────────────╯
+   ╰─────────────────╯  ╭ epoch table (copy as CSV) ────────╮
+   ╭ run ────────────╮  ╰───────────────────────────────────╯
+   ╭ configuration ──╮
+   ╭ environment ────╮
+   ╭ model ──────────╮
 ────────────────────────────────────────────────────────────────────
 """
 
@@ -165,19 +199,23 @@ class PhaseSpec:
     a schedule, not a training loop, so it takes the shape (name, gradients,
     length, cadence) and never the DataLoader or the metric function behind it.
     The list of these, in the order the phases run, is the dashboard's model of
-    an epoch — it lays out the progress gauge, assigns the phase inks, and
-    labels the badges from it alone.
+    an epoch — it lays out the epoch bar and assigns the phase colours from it
+    alone.
 
     Attributes:
-        name: Phase name, shown on the badge and in every chart legend.
-        training: Whether the phase performs gradient updates. Drives the state
-            accent, the pill, and the throughput readout.
+        name: Phase name, shown in the headline and in every chart key.
+        training: Whether the phase performs gradient updates. Part of the
+            schedule as published; the page reads the live answer — which
+            decides between *Training* and *Evaluating*, and whether steps count
+            toward throughput — from :meth:`Dashboard.update`'s
+            ``is_gradient_phase``, so that a phase the schedule never declared
+            is still told apart.
         steps: Steps in the phase, so overall progress can advance in proportion
             to it. ``0`` when unknown (a length-less ``IterableDataset``), in
-            which case the gauge falls back to weighting every phase of the
-            epoch equally.
+            which case the epoch bar falls back to weighting every phase of
+            the epoch equally.
         every: The phase runs on epochs divisible by this. Epochs that skip it
-            redistribute its share of the gauge across the phases that do run.
+            redistribute its share of the epoch across the phases that do run.
     """
 
     name: str
@@ -197,9 +235,11 @@ class Dashboard:
     JavaScript polls that file at the configured interval and patches the DOM
     in place — no page reloads, flicker-free live updates.
 
-    If the training process exits without calling :meth:`finalize`, the
-    ``last_update_ms`` field in the JSON lets the browser detect staleness and
-    switch to the *Offline* state automatically.
+    A run that ends says how: :meth:`finalize` records it as completed, or — given
+    the exception that ended it — as failed or interrupted, with the reason on the
+    page. Only a process that dies without the chance to say anything (killed,
+    power lost) falls back to the last resort: the ``last_update_ms`` field goes
+    stale, and the browser switches to *Offline* on its own.
 
     Args:
         config: Appearance and behaviour settings.
@@ -220,12 +260,18 @@ class Dashboard:
         self._monitor_phase: str = "val"
         self._server_port: int | None = None
         self._last_max_step: int = 0
+        # Where the run last was, kept so that a run cut short can be shown at the
+        # step it reached rather than at the end of a phase it never finished.
+        self._last_step: int = 0
+        self._last_phase: str = ""
+        self._last_phase_max: int = 0
+        self._error: str | None = None
         self._data_lock = threading.Lock()
         self._keepalive_stop = threading.Event()
         # The most recent full JSON payload, kept so the heartbeat can refresh
         # its timestamp without re-reading and re-parsing the (growing) file.
         self._last_payload: dict[str, Any] | None = None
-        # Live telemetry surfaced beside the gauge. The step-loss buffer is a
+        # Live telemetry surfaced in the rail of readings. The step-loss buffer is a
         # rolling window of recent training-step losses; learning rate and GPU
         # memory are the latest readings. All are held on the instance so the
         # final ``finalize`` snapshot carries them without re-plumbing.
@@ -276,10 +322,11 @@ class Dashboard:
         """
         Write the HTML shell and the first JSON snapshot.
 
-        Must be called exactly once before any :meth:`update` or
-        :meth:`finalize` call. Optionally starts an HTTP server and opens the
-        dashboard in the system browser, depending on the
-        :class:`DashboardConfig` settings.
+        Must be called before any :meth:`update` or :meth:`finalize` call.
+        Called again after :meth:`finalize` — a run that failed, retried in the
+        same process — it opens a new run on the same page. Optionally starts
+        an HTTP server and opens the dashboard in the system browser, depending
+        on the :class:`DashboardConfig` settings.
 
         Args:
             trainer_config: Trainer hyperparameters shown in the Configuration panel.
@@ -288,11 +335,11 @@ class Dashboard:
                 the Model panel.
             phases: The run's phases, in the order they run within an epoch (see
                 :class:`PhaseSpec`). This is the dashboard's whole model of an
-                epoch: it drives the progress gauge, the phase inks, and the
-                state accents. Left empty, the gauge falls back to tracking only
-                the phase currently reporting steps.
-            monitor: Name of the metric tracked for the best-value KPI, used to
-                label it (e.g. ``"accuracy"`` → "Best Val Accuracy").
+                epoch: it drives the epoch bar and the phase colours. Left
+                empty, progress falls back to tracking only the phase currently
+                reporting steps.
+            monitor: Name of the metric tracked for the best-value reading, used
+                to label it (e.g. ``"accuracy"`` → "Best val accuracy").
             monitor_phase: Name of the phase that metric is read from — the other
                 half of that label.
         """
@@ -304,6 +351,16 @@ class Dashboard:
         self._phases = list(phases or [])
         self._monitor = monitor
         self._monitor_phase = monitor_phase
+        # Nothing of an earlier run on this dashboard may open the new one: not how
+        # it ended, not where it stood, not its last readings, not its stopped
+        # heartbeat.
+        self._error = None
+        self._learning_rate = self._gpu_mem = None
+        self._last_max_step = self._last_step = self._last_phase_max = 0
+        self._last_phase = self._step_phase = ""
+        self._step_loss.clear()
+        self._step_nums.clear()
+        self._keepalive_stop.clear()
 
         self._html_path.parent.mkdir(parents=True, exist_ok=True)
         html_content = (
@@ -321,7 +378,7 @@ class Dashboard:
             best_metric=float("inf"), best_epoch=None,
         )
 
-        if self._config.use_server:
+        if self._config.use_server and self._server_port is None:
             self._start_http_server()
 
         if self._config.open_on_start:
@@ -377,14 +434,17 @@ class Dashboard:
             step_metrics: Per-metric scalar values for the most recent step.
             phase_name: Name of the active phase — one of the names given to
                 :meth:`initialize` (e.g. ``"train"``).
-            learning_rate: Current optimizer learning rate(s), shown live beside
-                the gauge — a single value, or a list of per-group rates rendered
-                as a range. ``None`` leaves the readout blank.
-            gpu_mem: ``(used_gb, total_gb)`` GPU memory for the live footprint
-                bar. ``None`` hides the readout.
+            learning_rate: Current optimizer learning rate(s), shown live in the
+                rail — a single value, or a list of per-group rates rendered
+                as a range. ``None`` keeps the last reading.
+            gpu_mem: ``(used_gb, total_gb)`` GPU memory for the live memory
+                meter. ``None`` keeps the last reading; the meter stays hidden
+                until there has been one.
         """
         if max_step > 0:
             self._last_max_step = max_step
+        if phase_name:
+            self._last_step, self._last_phase, self._last_phase_max = step, phase_name, max_step
         if learning_rate is not None:
             self._learning_rate = learning_rate
         if gpu_mem is not None:
@@ -430,14 +490,20 @@ class Dashboard:
         best_epoch: int | None = None,
         *,
         epochs_no_improve: int = 0,
+        error: BaseException | None = None,
     ) -> None:
         """
         Write the final JSON snapshot and embed all data inline in the HTML.
 
-        Stops the keepalive thread, sets the training status to
-        ``"completed"``, writes one last JSON update, then inlines all data
-        into the HTML shell so the dashboard remains fully self-contained and
-        viewable offline after the process exits.
+        Stops the keepalive thread, records how the run ended, writes one last
+        JSON update, then inlines all data into the HTML shell so the dashboard
+        remains fully self-contained and viewable offline after the process
+        exits.
+
+        How it ended is read from *error*: none, and the run ``"completed"``; a
+        ``KeyboardInterrupt``, and it was ``"interrupted"``; anything else, and it
+        ``"failed"`` — with the exception's type and message kept for the page to
+        show. A run cut short is left at the step it reached.
 
         Args:
             epoch: Final epoch number reached.
@@ -446,13 +512,23 @@ class Dashboard:
             best_metric: Best monitored value achieved.
             best_epoch: Epoch that achieved ``best_metric``.
             epochs_no_improve: Consecutive epochs without an improvement.
+            error: The exception that ended the run, if one did.
         """
         self._keepalive_stop.set()
-        self._status = "completed"
-        ms = self._last_max_step
+        if error is None:
+            self._status = "completed"
+            step = max_step = self._last_max_step
+            phase = ""
+        else:
+            self._status = "interrupted" if isinstance(error, KeyboardInterrupt) else "failed"
+            self._error = f"{type(error).__name__}: {error}".removesuffix(": ")
+            # The step, its phase and that phase's length travel together: the
+            # length of whichever phase last had one would pair "step 900" with
+            # another phase's 620.
+            step, max_step, phase = self._last_step, self._last_phase_max, self._last_phase
         self._write_data(
-            epoch, max_epoch, ms, ms,
-            epoch_metrics or {}, None, "",
+            epoch, max_epoch, step, max_step,
+            epoch_metrics or {}, None, phase,
             best_metric, best_epoch, epochs_no_improve,
         )
         self._embed_data_in_html()
@@ -506,6 +582,7 @@ class Dashboard:
         el = self.elapsed
         data: dict[str, Any] = {
             "status":             self._status,
+            "error":              self._error,
             "current_epoch":      epoch,
             "max_epoch":          max_epoch,
             "current_step":       step,
@@ -568,8 +645,18 @@ class Dashboard:
         if not self._html_path.exists() or not self._data_path.exists():
             return
         html = self._html_path.read_text(encoding="utf-8")
-        data_text = self._data_path.read_text(encoding="utf-8")
+        # Under the lock: a keepalive tick already past its stop check may still be
+        # replacing this file, and Windows refuses to open one mid-replace.
+        with self._data_lock:
+            data_text = self._data_path.read_text(encoding="utf-8")
 
+        # The JSON goes inside a <script>, where the HTML parser — not the JSON one —
+        # decides where the element ends. A "</script>" anywhere in it (an error
+        # message quoting an HTML page is enough) would close the block early and
+        # spill the rest onto the page, and a "<!--" could keep it from closing at
+        # all, so both are written in forms JSON reads back as the same text and
+        # HTML does not recognize.
+        data_text = data_text.replace("</", "<\\/").replace("<!--", "<\\u0021--")
         html = html.replace(
             "</head>",
             f"<script>window.__TRAIN4ALL_DATA__={data_text};</script>\n</head>",

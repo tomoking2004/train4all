@@ -30,7 +30,7 @@ train4all is a minimal PyTorch training framework. Subclass `BaseTrainer`, imple
 - **Scaling on small GPUs** — gradient accumulation (`accumulation_steps`) simulates a larger effective batch at no extra memory cost, and per-model `torch.compile` (`compile=True`) unlocks graph-level speedups
 - **Automatic checkpointing** — `latest.pth` after every epoch and `best.pth` whenever the monitored metric improves; periodic saves every N epochs, plus a standalone `Checkpoint` reader to inspect any file with no model or subclass
 - **Early stopping** — patience-based on any `monitor` metric (`min`/`max` mode), with automatic best-checkpoint tracking
-- **Live web dashboard** — a self-contained, dependency-free panel: progress gauge, live KPIs, per-step loss graph, per-metric charts, light & dark themes
+- **Live web dashboard** — a self-contained, dependency-free page: progress through the run and through the epoch's phases, time left, live readings, a per-step loss strip, a chart and a table of every metric, light & dark themes
 - **Flexible metrics** — epoch- and step-level recording, JSON export, matplotlib curve plots
 - **Snapshot sync** — a mirror of `run_dir` at any path, for cloud-backed storage during long runs
 - **Lifecycle hooks** — 14 hook points to inject logic at any stage without subclassing the loop
@@ -819,7 +819,7 @@ trainer.empty_cuda_cache()       # gc.collect() + torch.cuda.empty_cache()
 
 ## Live Dashboard
 
-Pass `use_dashboard=True` for a live, dependency-free dashboard in your browser: an overall-progress gauge, a KPI grid (current metric, best monitored value, throughput, ETA, learning rate, GPU memory), a live per-step loss graph, and a per-metric SVG chart for each metric. It follows your light/dark theme and embeds its data inline so it stays viewable offline.
+Pass `use_dashboard=True` for a live, dependency-free dashboard in your browser. The run opens the page: where it is, how long is left, and two bars — the whole run, and the running epoch split by phase — that look the same at five epochs or fifty thousand. Beside the history stands a rail of live readings — the best monitored value and how long since it improved, a strip chart of the running phase's per-step loss, throughput, learning rate, GPU memory — followed by the run's start time, configuration, environment, and model. The history is an SVG chart per metric and a table of the latest epochs, with every epoch a click away as CSV; point at an epoch in a chart or the table and every chart reads that epoch. The page says how a run ended — completed, stopped early, failed with its error, interrupted, or stopped answering — rather than leaving you to infer it. It can notify you when the run finishes, follows your light/dark theme, and embeds its data inline so it stays viewable offline.
 
 <div align="center">
   <img alt="train4all dashboard — a completed run" src="assets/dashboard-complete.png" width="100%">
@@ -853,7 +853,7 @@ Whether there is a dashboard at all is `use_dashboard`, not a setting here.
 | `stale_after_ms` | `30000` | Mark the run **Offline** after this many ms without a heartbeat. An absolute liveness timeout, independent of `poll_interval_ms` — size it above your slowest synchronous pause (large checkpoint saves, heavy plotting). |
 | `use_server` | `True` | Start a local HTTP server (required for Chrome/Edge on `file://` pages). |
 
-The trainer drives the dashboard for you, but the engine is exported for anyone feeding it from their own loop — `train4all.dashboard`, a subsystem beside `train4all.trainer` rather than a helper under it, holding the page it writes (`style.css`, `shell.html`) as its own package data. `Dashboard` writes the HTML shell once on `initialize()`, overwrites a small JSON file on every `update()`, and inlines that data on `finalize()` so the page survives the process; `mark_started()` sets the elapsed-time origin, `heartbeat()` keeps a long synchronous pause from reading as *Offline*, `open_browser()` raises the page on demand, and `url` / `path` / `active` / `elapsed` / `poll_s` report where and how it is running. `PhaseSpec` is the flat projection of a [`Phase`](#phases) it renders a schedule from (`name`, `training`, `steps`, `every`).
+The trainer drives the dashboard for you, but the engine is exported for anyone feeding it from their own loop — `train4all.dashboard`, a subsystem beside `train4all.trainer` rather than a helper under it, holding the page it writes (`style.css`, `shell.html`) as its own package data. `Dashboard` writes the HTML shell once on `initialize()`, overwrites a small JSON file on every `update()`, and inlines that data on `finalize()` so the page survives the process. `finalize(..., error=exc)` records a run that failed or was interrupted, with its reason, instead of a completed one. `mark_started()` sets the elapsed-time origin, `heartbeat()` keeps a long synchronous pause from reading as *Offline*, `open_browser()` raises the page on demand, and `url` / `path` / `active` / `elapsed` / `poll_s` report where and how it is running. `PhaseSpec` is the flat projection of a [`Phase`](#phases) it renders a schedule from (`name`, `training`, `steps`, `every`).
 
 ---
 

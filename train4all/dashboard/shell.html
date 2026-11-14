@@ -10,149 +10,125 @@
 <meta name="data-file"  content="__T4A_DATA_FILE__">
 <meta name="stale-ms"   content="__T4A_STALE_MS__">
 <meta name="version"    content="__T4A_VERSION__">
-<title>train4all — Dashboard</title>
+<title>train4all</title>
+<link rel="icon" id="favicon" href="data:,">
 <script>(function () { try {
   var t = localStorage.getItem('t4a-theme')
        || (matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark');
   document.documentElement.dataset.theme = t;
 } catch (e) { document.documentElement.dataset.theme = 'dark'; } })();</script>
+<!-- The one outside request, and an optional one: offline, the page sets itself
+     in the system sans and nothing else changes. -->
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Instrument+Sans:wght@400;500;600&display=swap" rel="stylesheet">
 <style>
 __T4A_CSS__
 </style>
 </head>
 <body>
-<div class="runline" id="run-line"></div>
-<div class="app">
+<div class="page">
 
-  <header class="top">
-    <div class="brand">
-      <a class="brand-link" href="https://github.com/tomoking2004/train4all" target="_blank" rel="noopener" aria-label="train4all on GitHub">
-        <span class="brand-name">train4all</span>
-        <svg class="gh" viewBox="0 0 24 24" aria-hidden="true">
-          <path d="M12 .297c-6.63 0-12 5.373-12 12 0 5.303 3.438 9.8 8.205 11.385.6.113.82-.258.82-.577 0-.285-.01-1.04-.015-2.04-3.338.724-4.042-1.61-4.042-1.61C4.422 18.07 3.633 17.7 3.633 17.7c-1.087-.744.084-.729.084-.729 1.205.084 1.838 1.236 1.838 1.236 1.07 1.835 2.809 1.305 3.495.998.108-.776.417-1.305.76-1.605-2.665-.3-5.466-1.332-5.466-5.93 0-1.31.465-2.38 1.235-3.22-.135-.303-.54-1.523.105-3.176 0 0 1.005-.322 3.3 1.23.96-.267 1.98-.399 3-.405 1.02.006 2.04.138 3 .405 2.28-1.552 3.285-1.23 3.285-1.23.645 1.653.24 2.873.12 3.176.765.84 1.23 1.91 1.23 3.22 0 4.61-2.805 5.625-5.475 5.92.42.36.81 1.096.81 2.22 0 1.606-.015 2.896-.015 3.286 0 .315.21.69.825.57C20.565 22.092 24 17.592 24 12.297c0-6.627-5.373-12-12-12"/>
+  <header class="bar">
+    <span class="mark">train4all</span>
+    <span class="ver" id="version"></span>
+    <div class="bar-end">
+      <span class="status" id="status" role="status"><i class="status-dot"></i><span id="status-text">Starting</span></span>
+      <button class="tool" id="notify-btn" type="button" aria-pressed="false" hidden>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M6 9a6 6 0 0 1 12 0c0 6 2.5 7 2.5 8h-17C3.5 16 6 15 6 9z"/><path d="M10 20.500a2.2 2.2 0 0 0 4 0"/>
         </svg>
+        <span id="notify-text">Notify when done</span>
+      </button>
+      <!-- a link that leaves the page says where it goes: the mark it carries is the destination's own -->
+      <a class="tool" href="https://github.com/tomoking2004/train4all" target="_blank" rel="noopener" title="Open train4all on GitHub">
+        <svg viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0 0 16 8c0-4.42-3.58-8-8-8z"/></svg>
+        <span>GitHub</span>
       </a>
-      <span class="brand-cap">Live Training Dashboard</span>
+      <button class="tool" id="theme-btn" type="button" title="Switch between light and dark (T)" aria-label="Switch between light and dark">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true">
+          <circle cx="12" cy="12" r="8.5"/><path d="M12 3.500a8.5 8.5 0 0 1 0 17z" fill="currentColor" stroke="none"/>
+        </svg>
+      </button>
     </div>
-    <div class="top-meta">
-      <span><span class="k">Started</span><b id="m-start">—</b></span>
-      <span><span class="k">Elapsed</span><b id="m-elapsed">—</b></span>
-    </div>
-    <div class="pill" id="status" aria-live="polite"><span class="dot"></span><span id="status-text">Standby</span></div>
-    <button class="tbtn" id="theme-btn" title="Toggle theme (T)" aria-label="Toggle light / dark theme">
-      <svg class="i-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
-        <circle cx="12" cy="12" r="4"/>
-        <path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41"/>
-      </svg>
-      <svg class="i-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-        <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/>
-      </svg>
-    </button>
   </header>
 
-  <!-- Hero: an instrument panel — KPI grid incl. learning rate + GPU (left) ·
-       overall gauge (centre) · live step-loss graph (right). The flanks carry
-       signal into the width either side of the gauge instead of empty margin. -->
-  <section class="hero" aria-label="Run progress">
-    <div class="hero-grid">
-      <div class="hero-side hero-left">
-        <div class="kpi-grid">
-          <div class="kpi">
-            <span class="k-label" id="k-primary-label">Metric</span>
-            <div class="k-val"><span id="k-primary">—</span></div>
-            <div class="k-sub" id="k-primary-sub">—</div>
-          </div>
-          <div class="kpi">
-            <span class="k-label" id="k-best-label">Best Val</span>
-            <div class="k-val"><span class="star" id="k-best-star" style="display:none">★</span><span id="k-best">—</span></div>
-            <div class="k-sub" id="k-best-sub">—</div>
-          </div>
-          <div class="kpi">
-            <span class="k-label">Throughput</span>
-            <div class="k-val" id="k-speed">—</div>
-            <div class="k-sub">it / s</div>
-          </div>
-          <div class="kpi">
-            <span class="k-label">ETA</span>
-            <div class="k-val" id="k-eta">—</div>
-            <div class="k-sub" id="k-eta-sub">—</div>
-          </div>
-          <div class="kpi">
-            <span class="k-label">Learning Rate</span>
-            <div class="k-val" id="k-lr">—</div>
-            <div class="k-sub" id="k-lr-sub"></div>
-          </div>
-          <div class="kpi" id="stat-gpu" style="display:none">
-            <span class="k-label">GPU Memory</span>
-            <div class="k-val"><span id="k-gpu-pct">—</span><span class="k-note" id="k-gpu"></span></div>
-            <div class="gbar"><i id="gpu-bar"></i></div>
-          </div>
-        </div>
+  <!-- The run: where it is (left), how long is left (right), and beneath them
+       two bars — the whole run, and the epoch it is in. -->
+  <section class="run" aria-label="Run progress">
+    <div class="run-head" id="run-head">
+      <div>
+        <h1 class="run-title" id="run-title">Starting</h1>
+        <p class="sub" id="run-sub">Waiting for the first step.</p>
       </div>
-
-      <div class="hero-center">
-        <div class="gauge">
-          <svg viewBox="0 0 300 300" aria-hidden="true">
-            <defs>
-              <linearGradient id="ringGrad" x1="0" y1="0" x2="1" y2="1">
-                <stop class="rs1" offset="0"/><stop class="rs2" offset="0.18"/>
-                <stop class="rs3" offset="0.36"/><stop class="rs4" offset="0.52"/>
-                <stop class="rs5" offset="0.66"/><stop class="rs6" offset="0.8"/>
-                <stop class="rs7" offset="0.9"/><stop class="rs8" offset="1"/>
-              </linearGradient>
-            </defs>
-            <g class="g-bezel" id="g-bezel"></g>
-            <circle class="g-bg" cx="150" cy="150" r="124" stroke-width="13"/>
-            <circle class="g-ring run" id="ring-run" cx="150" cy="150" r="124" stroke-dasharray="779.11" stroke-dashoffset="779.11"/>
-            <circle class="g-bg" cx="150" cy="150" r="100" stroke-width="7"/>
-            <circle class="g-ring step" id="ring-step" cx="150" cy="150" r="100" stroke-dasharray="628.32" stroke-dashoffset="628.32"/>
-            <g id="g-marks"></g>
-          </svg>
-          <div class="gauge-center">
-            <div class="g-pct"><b id="ov-pct">0</b><span>%</span></div>
-            <i id="ov-label">Overall</i>
-          </div>
-        </div>
-        <div class="hero-meta">
-          <span class="hm-phase" id="hm-phase" style="display:none">—</span>
-          <span id="hm-epoch">Epoch — / —</span>
-          <span class="hm-sep">·</span>
-          <span id="hm-step">Step — / —</span>
-        </div>
-      </div>
-
-      <div class="hero-side hero-right">
-        <div class="stepgraph" aria-label="Loss per step for the active phase">
-          <div class="sg-head">
-            <span class="sg-title">Step Loss</span>
-            <span class="hm-phase" id="sg-phase" style="display:none">—</span>
-          </div>
-          <div class="sg-body" id="spark-body"><div class="spark-empty">awaiting steps…</div></div>
-          <div class="sg-foot">
-            <span id="sp-win">—</span>
-            <span id="sp-range">—</span>
-          </div>
-        </div>
+      <div class="run-time">
+        <p class="run-eta" id="run-eta"></p>
+        <p class="sub" id="run-eta-sub"></p>
       </div>
     </div>
+    <div class="gauge" id="run-bar" role="progressbar" aria-label="Epochs completed" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><i id="run-fill"></i></div>
+    <div class="phases" id="epoch-bar" aria-hidden="true" hidden></div>
+    <div class="phase-keys" id="epoch-keys" hidden></div>
   </section>
 
-  <!-- Metric charts — uniform two-column grid (loss first); the area
-       materialises only once the first epoch metric exists -->
-  <main class="charts">
-    <div class="grid" id="charts-grid"></div>
-  </main>
+  <div class="body">
+    <!-- Readings that change while the run is live. -->
+    <aside class="vitals" aria-label="Live readings">
+      <section class="panel">
+        <div class="label" id="best-label">Best</div>
+        <div class="best-value" id="best-value">—</div>
+        <div class="note" id="best-note"></div>
+      </section>
+      <section class="panel live" id="live" hidden>
+        <div id="live-chart" hidden>
+          <div class="live-head">
+            <span class="label" id="live-label">Step loss</span>
+            <span class="live-now" id="live-now"></span>
+          </div>
+          <div class="live-plot" id="live-plot"></div>
+          <div class="note" id="live-note"></div>
+        </div>
+        <dl class="facts">
+          <div class="fact" id="fact-steps" hidden></div>
+          <div class="fact" id="fact-speed" hidden><dt>Speed</dt><dd id="f-speed">—</dd></div>
+          <div class="fact" id="fact-lr" hidden><dt>Learning rate</dt><dd id="f-lr">—</dd></div>
+          <div class="fact" id="fact-gpu" hidden>
+            <dt>GPU memory</dt><dd id="f-gpu">—</dd>
+            <div class="meter" id="gpu-meter"><i id="gpu-bar"></i></div>
+          </div>
+        </dl>
+      </section>
+    </aside>
 
-  <section class="meta">
-    <div><h2>Configuration</h2><div class="kv" id="cfg-grid"><div class="none">Loading…</div></div></div>
-    <div><h2>Environment</h2><div class="kv" id="env-grid"><div class="none">Loading…</div></div></div>
-    <div><h2>Model</h2><div class="kv" id="model-grid"><div class="none">Loading…</div></div></div>
-  </section>
+    <!-- The history: one chart per metric, then the same numbers as a table. -->
+    <main class="history">
+      <p class="panel empty" id="charts-empty">Charts appear when the first epoch finishes.</p>
+      <div class="charts" id="charts-grid"></div>
+      <section class="panel epochs" id="epochs" hidden>
+        <div class="section-head">
+          <h2>Epochs</h2>
+          <button class="toggle" id="csv-btn" type="button">Copy as CSV</button>
+          <span class="note" id="epochs-note"></span>
+        </div>
+        <div class="table-wrap"><table id="epoch-table"></table></div>
+      </section>
+    </main>
 
-  <footer id="footer">train4all</footer>
+    <!-- The run's record: when it ran, what it was started with, and on what. -->
+    <aside class="record" aria-label="Run record">
+      <section class="panel">
+        <h2>Run</h2>
+        <dl class="facts">
+          <div class="fact"><dt>Started</dt><dd id="f-start">—</dd></div>
+          <div class="fact"><dt id="f-elapsed-label">Elapsed</dt><dd id="f-elapsed">—</dd></div>
+          <div class="fact" id="fact-end" hidden><dt id="f-end-label">Finished</dt><dd id="f-end">—</dd></div>
+        </dl>
+      </section>
+      <section class="panel"><h2>Configuration</h2><div id="cfg-grid"><div class="none">—</div></div></section>
+      <section class="panel"><h2>Environment</h2><div id="env-grid"><div class="none">—</div></div></section>
+      <section class="panel"><h2>Model</h2><div id="model-grid"><div class="none">—</div></div></section>
+    </aside>
+  </div>
 </div>
 
 <script>
@@ -165,67 +141,82 @@ document.addEventListener('DOMContentLoaded', function () {
   const DATA_FILE = META('data-file').content;
   const STALE_MS  = parseInt(META('stale-ms').content) || 30000;
   const VERSION   = META('version') ? META('version').content : '';
-  const REDUCED   = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  /* a finished run carries its data inline: nothing to poll, nothing to wait for */
+  const EMBEDDED  = !!window.__TRAIN4ALL_DATA__;
 
   const el    = (id) => document.getElementById(id);
   const clamp = (x, a, b) => Math.min(Math.max(x, a), b);
   const lerp  = (a, b, k) => a + (b - a) * k;
-  const titleCase = (s) => String(s).replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
+  const isNum = (v) => typeof v === 'number' && isFinite(v);
   const esc = (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/"/g, '&quot;');
+  /* a name the run supplies is an identifier, and an identifier too long for its
+     column should break at an underscore rather than mid-word */
+  const soft = (s) => esc(s).replace(/_/g, '_<wbr>');
+  /* a metric is a Python identifier — set it as words: top2_accuracy → Top2 accuracy */
+  const words = (s) => { const w = String(s).replace(/_/g, ' '); return w.charAt(0).toUpperCase() + w.slice(1); };
+  const plural = (n, w) => n + ' ' + w + (n === 1 ? '' : 's');
   function setText(id, t) { const e = el(id); if (e && e.textContent !== t) e.textContent = t; }
-  function fmt(v) { if (typeof v !== 'number' || !isFinite(v)) return String(v); const a = Math.abs(v);
-    if (a !== 0 && (a < 1e-3 || a >= 1e5)) return v.toExponential(2); if (a >= 100) return v.toFixed(2); return v.toFixed(4); }
+  function show(id, on) { const e = el(id); if (e && e.hidden === on) e.hidden = !on; }
+  /* A metric at reading size: four decimals below a hundred; two, with
+     separators, up to a hundred thousand; whole and separated up to a billion;
+     and an exponent only where the digits would otherwise say nothing. */
+  function fmt(v) { if (!isNum(v)) return '—'; const a = Math.abs(v);
+    if (a !== 0 && (a < 1e-3 || a >= 1e9)) return v.toExponential(2).replace('e+', 'e');
+    if (a >= 1e5) return Math.round(v).toLocaleString('en-US');
+    if (a >= 100) return v.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    return v.toFixed(4); }
+  /* a count that can reach the tens of thousands is set with its separators: 50,000 */
+  const count = (n) => Number(n).toLocaleString('en-US');
   function fmtDur(s) { if (!isFinite(s) || s < 0) return '—'; s = Math.round(s);
+    if (s >= 100 * 86400) return count(Math.round(s / 86400)) + ' days';                            /* past a hundred days, the hours say nothing */
+    if (s >= 86400) return Math.floor(s / 86400) + 'd ' + Math.floor((s % 86400) / 3600) + 'h';   /* past a day, seconds are noise */
     const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), x = s % 60;
     if (h) return h + ':' + String(m).padStart(2, '0') + ':' + String(x).padStart(2, '0'); return m + ':' + String(x).padStart(2, '0'); }
   /* `d` is the payload everywhere in this script — a clock takes a Date, so it is `dt`. */
   function fmtClock(dt) { return String(dt.getHours()).padStart(2, '0') + ':' + String(dt.getMinutes()).padStart(2, '0'); }
 
-  /* ── theme ─────────────────────────────────────────────── */
-  let themeEpoch = 0;
-  function themeColors() {
-    const cs = getComputedStyle(document.documentElement);
-    const v = (n) => cs.getPropertyValue(n).trim();
-    return { bg: v('--bg'), panel: v('--panel'), text: v('--text'), dim: v('--dim'), faint: v('--faint'),
-      line: v('--line'), grid1: v('--grid-1'), grid2: v('--grid-2'), gold: v('--gold'),
-      pal: [v('--c1'), v('--c2'), v('--c3'), v('--c4'), v('--c5'), v('--c6'), v('--c7'), v('--c8')] };
-  }
+  if (VERSION && VERSION !== 'unknown') setText('version', 'v' + VERSION);
+
   /* ── phase inks ────────────────────────────────────────────
-     Each phase claims one slot of the spectrum, once, and keeps it for the life
-     of the page — so a phase wears the same ink in every chart, legend, badge
-     and ring, whichever subset of phases a given chart happens to show. Slots
-     are claimed in two passes over the run's declared phase order: the semantic
-     anchors first (train blue, val / eval violet, test magenta), then everything
-     else takes the lowest free slot. A phase the run never declared (a bare
-     execute_phase, a later test()) claims its slot the first time it is drawn. */
+     Each phase claims one slot of the palette, once, and keeps it for the life
+     of the page — so a phase wears the same ink in every chart, key, table
+     column and epoch-bar segment, whichever subset of phases a chart happens to
+     show. Slots are claimed in two passes over the run's declared phase order:
+     the anchors first (train blue, val / dev / eval rose, test plum — the pairing a
+     reader of training curves already expects), then everything else takes the
+     lowest free slot. A phase the run never declared (a bare execute_phase, a
+     later test()) claims its slot the first time it is drawn. */
+  const INKS = ['var(--c1)', 'var(--c2)', 'var(--c3)', 'var(--c4)', 'var(--c5)', 'var(--c6)', 'var(--c7)', 'var(--c8)'];
   const ink = { slot: {}, used: new Set(), seeded: false };
-  function anchorSlot(nm) { return /^train/i.test(nm) ? 0 : /^(val|dev|eval)/i.test(nm) ? 3 : /^test/i.test(nm) ? 6 : -1; }
+  function anchorSlot(nm) { return /^train/i.test(nm) ? 0 : /^(val|dev|eval)/i.test(nm) ? 1 : /^test/i.test(nm) ? 2 : -1; }
   function claim(nm, i) { ink.used.add(i); ink.slot[nm] = i; return i; }
   function inkSlot(nm) {
     if (nm in ink.slot) return ink.slot[nm];
     const a = anchorSlot(nm);
     if (a >= 0 && !ink.used.has(a)) return claim(nm, a);
-    for (let i = 0; i < 8; i++) if (!ink.used.has(i)) return claim(nm, i);
-    return claim(nm, Object.keys(ink.slot).length % 8);          /* > 8 phases — wrap */
+    for (let i = 0; i < INKS.length; i++) if (!ink.used.has(i)) return claim(nm, i);
+    return claim(nm, Object.keys(ink.slot).length % INKS.length);   /* more phases than inks — wrap */
   }
   function seedInks(phases) {
     if (ink.seeded || !phases || !phases.length) return;
     ink.seeded = true;
-    /* anchors first, so a phase that merely *starts* with "train" (train_eval)
-       cannot take the blue out from under the training phase itself */
+    /* anchors first, so a phase that finds its own anchor taken (train_eval,
+       declared after train) cannot settle on the rose or the plum before the
+       validation and test phases declared after it have claimed them */
     phases.forEach((p) => { const a = anchorSlot(p.name);
       if (a >= 0 && !ink.used.has(a) && !(p.name in ink.slot)) claim(p.name, a); });
     phases.forEach((p) => inkSlot(p.name));
   }
-  function phasePal(C, names) { return names.map((nm) => C.pal[inkSlot(nm)]); }
-  function accentColor() { return getComputedStyle(document.documentElement).getPropertyValue('--accent').trim(); }
+  const inkOf = (nm) => INKS[inkSlot(nm)];
+  const keyHTML = (nm, tail) => '<span class="key" title="' + esc(nm) + '"><i style="background:' + inkOf(nm) + '"></i><span>' + soft(nm) + '</span>' + (tail || '') + '</span>';
+
+  /* ── theme ─────────────────────────────────────────────── */
+  /* every colour on the page is a custom property, so a theme change repaints
+     without a single re-render — only the favicon, a bitmap, is redrawn */
   function applyTheme(t) {
     document.documentElement.dataset.theme = t;
     try { localStorage.setItem('t4a-theme', t); } catch (e) {}
-    themeEpoch++;
-    setFavicon(accentColor());
-    Object.keys(charts).forEach(renderChart);
-    if (sparkData) renderSpark(sparkData);
+    drawFavicon(true);
   }
   el('theme-btn').addEventListener('click', () => {
     applyTheme(document.documentElement.dataset.theme === 'light' ? 'dark' : 'light');
@@ -235,52 +226,123 @@ document.addEventListener('DOMContentLoaded', function () {
         && !/INPUT|TEXTAREA|SELECT/.test((e.target && e.target.tagName) || '')) el('theme-btn').click();
   });
 
-  /* ── state accent · favicon · status pill ──────────────── */
-  const favLink = document.createElement('link'); favLink.rel = 'icon'; document.head.appendChild(favLink);
-  function setFavicon(color) { try {
+  /* ── status · favicon ──────────────────────────────────────
+     The favicon is a progress ring in the status dot's colour, so a background tab
+     still says how far the run is and whether it is alive. */
+  const MODE_LABEL = { training: 'Training', evaluating: 'Evaluating',
+    completed: 'Completed', idle: 'Starting', stopped: 'Offline', failed: 'Failed', interrupted: 'Interrupted' };
+  const view = { mode: '', live: '', tint: '', overall: 0, favSig: '' };
+  /* the two modes of a run that is moving — the only ones with no ink of their own */
+  const isLive = (mode) => mode === 'training' || mode === 'evaluating';
+  function drawFavicon(force) { try {
+    const frac = view.mode === 'completed' ? 1 : view.overall;
+    const sig = view.tint + '|' + Math.round(frac * 40);
+    if (!force && sig === view.favSig) return;
+    view.favSig = sig;
     const c = document.createElement('canvas'); c.width = c.height = 64;
-    const x = c.getContext('2d'); x.fillStyle = color; x.beginPath();
-    if (x.roundRect) x.roundRect(13, 13, 38, 38, 12); else x.arc(32, 32, 19, 0, Math.PI * 2);
-    x.fill();
-    const g = x.createLinearGradient(0, 13, 0, 51);
-    g.addColorStop(0, 'rgba(255,255,255,0.33)'); g.addColorStop(1, 'rgba(255,255,255,0)');
-    x.fillStyle = g; x.fill();
-    favLink.href = c.toDataURL('image/png');
+    const x = c.getContext('2d'), top = -Math.PI / 2;
+    x.lineWidth = 12; x.lineCap = 'butt';
+    x.strokeStyle = getComputedStyle(document.documentElement).getPropertyValue('--accent').trim();
+    x.globalAlpha = 0.28; x.beginPath(); x.arc(32, 32, 24, 0, Math.PI * 2); x.stroke();
+    x.globalAlpha = 1;
+    if (frac > 0) { x.beginPath(); x.arc(32, 32, 24, top, top + frac * Math.PI * 2); x.stroke(); }
+    el('favicon').href = c.toDataURL('image/png');
   } catch (e) {} }
-
-  /* The pill reports the run's state, not which phase is up — the phase badge
-     beside the gauge already names that. Any non-gradient phase reads Evaluating. */
-  const MODE_LABEL = { training: 'Training', evaluating: 'Evaluating', stagnant: 'Plateau',
-    completed: 'Completed', idle: 'Standby', stopped: 'Offline' };
-  let curMode = '';
-  function setMode(mode, ni) {
-    const pill = el('status');
-    pill.classList.toggle('live', mode === 'training' || mode === 'evaluating');
-    pill.title = mode === 'stagnant' ? 'No improvement for ' + ni + ' epoch' + (ni === 1 ? '' : 's') : '';
+  function setMode(mode) {
+    if (mode === view.mode) return false;
+    view.mode = mode;
     setText('status-text', MODE_LABEL[mode] || mode);
-    if (mode === curMode) return;
-    curMode = mode;
-    document.documentElement.style.setProperty('--accent', 'var(--st-' + mode + ')');
-    setFavicon(accentColor());
+    el('status').toggleAttribute('data-live', isLive(mode));
+    return true;
+  }
+  /* While a phase is running the status wears that phase's ink — the dot beside
+     "Training" is the blue of every train curve — and otherwise the ink of the
+     state it is in. A live mode always has its phase: the page enters one only
+     on a step that phase reported. */
+  function setAccent(mode, phase) {
+    const tint = isLive(mode) ? inkOf(phase) : 'var(--st-' + mode + ')';
+    if (tint === view.tint) return;
+    view.tint = tint;
+    document.documentElement.style.setProperty('--accent', tint);
   }
 
-  /* ── eased number tween ────────────────────────────────── */
-  function tween(node, to, f) {
-    if (!node) return;
-    if (typeof to !== 'number' || !isFinite(to)) { node.textContent = (to === undefined || to === null) ? '—' : String(to); node._v = undefined; return; }
-    const from = (typeof node._v === 'number') ? node._v : to; node._v = to;
-    if (from === to || REDUCED) { node.textContent = f(to); return; }
-    const t0 = performance.now(), d = 380;
-    (function step(t) { const k = clamp((t - t0) / d, 0, 1), e = 1 - Math.pow(1 - k, 3);
-      node.textContent = f(from + (to - from) * e); if (k < 1) requestAnimationFrame(step); })(performance.now());
+  /* ── notify when done ──────────────────────────────────────
+     A run takes hours and the tab is rarely the one in front. Opted in, the page
+     announces the end once, when the run is over or stops answering: a system
+     notification where the browser allows one, and a chime where it does not.
+
+     The chime is why a click on the button always does something. A browser may show its
+     permission request so quietly that it goes unseen, and after a few unseen
+     requests it blocks the page outright, for good as far as the page can tell —
+     so the button never waits on the answer and is never disabled by it. It
+     turns on at once, sounds its chime, and says which of the two
+     it will do; if permission arrives later, it says so then. */
+  const notify = { on: false, audio: null };
+  const canAlert = !EMBEDDED;
+  const allowed = () => 'Notification' in window && Notification.permission === 'granted';
+  function paintNotify() {
+    const b = el('notify-btn');
+    b.setAttribute('aria-pressed', notify.on ? 'true' : 'false');
+    setText('notify-text', !notify.on ? 'Notify when done' : allowed() ? 'Will notify when done' : 'Will chime when done');
+    b.title = !notify.on ? 'Tell me when the run finishes or stops answering'
+      : allowed() ? 'A system notification will appear when the run finishes or stops answering'
+      : 'Notifications are not allowed for this page, so a sound will play instead. To get notifications, allow them in the site settings beside the address bar.';
+  }
+  /* a sound may only start from a page the reader has touched, so the audio context is made inside a click */
+  function wake() { try {
+    notify.audio = notify.audio || new (window.AudioContext || window.webkitAudioContext)();
+    notify.audio.resume();
+  } catch (e) {} }
+  function chime(rising) { try {
+    const ac = notify.audio; if (!ac) return;
+    ac.resume();
+    (rising ? [660, 880] : [520, 390]).forEach((hz, i) => {
+      const t = ac.currentTime + i * 0.18, osc = ac.createOscillator(), amp = ac.createGain();
+      osc.type = 'sine'; osc.frequency.value = hz;
+      amp.gain.setValueAtTime(0.0001, t);
+      amp.gain.exponentialRampToValueAtTime(0.18, t + 0.02);
+      amp.gain.exponentialRampToValueAtTime(0.0001, t + 0.5);
+      osc.connect(amp); amp.connect(ac.destination);
+      osc.start(t); osc.stop(t + 0.55);
+    });
+  } catch (e) {} }
+  if (canAlert) {
+    /* An opt-in is restored only where it can be kept without another click: a
+       chime needs a touch of this page first, so a remembered one would be a
+       promise the page could not keep. */
+    try { notify.on = localStorage.getItem('t4a-notify') === '1' && allowed(); } catch (e) {}
+    el('notify-btn').addEventListener('click', () => {
+      notify.on = !notify.on;
+      try { localStorage.setItem('t4a-notify', notify.on ? '1' : '0'); } catch (e) {}
+      if (notify.on) {
+        wake();
+        if (!allowed()) chime(true);   /* the sound it will make, as its answer to the click */
+        if ('Notification' in window && Notification.permission === 'default') {
+          try { Promise.resolve(Notification.requestPermission()).then(paintNotify, paintNotify); } catch (e) {}
+        }
+      }
+      paintNotify();
+    });
+    paintNotify();
+  }
+  function raiseNotification(title, body) {
+    if (!canAlert || !notify.on) return;
+    if (allowed()) { try { new Notification(title, { body: body, tag: 'train4all-run' }); return; } catch (e) {} }
+    chime(view.mode === 'completed');
   }
 
   /* ── click-to-copy rows ────────────────────────────────── */
-  function showToast() { let t = el('toast'); if (!t) { t = document.createElement('div'); t.id = 'toast'; t.className = 'toast'; t.textContent = '✓ Copied'; document.body.appendChild(t); }
-    t.classList.add('show'); clearTimeout(t._t); t._t = setTimeout(() => t.classList.remove('show'), 1500); }
-  function attachCopy(row) { if (row.dataset.copy) return; row.dataset.copy = '1';
+  function copyText(text) { return navigator.clipboard ? navigator.clipboard.writeText(text) : Promise.reject(); }
+  /* the control that was pressed answers in place, then reverts */
+  function flash(node, text) {
+    if (node._flash) return;
+    const was = node.textContent; node.textContent = text;
+    node._flash = setTimeout(() => { node.textContent = was; node._flash = 0; }, 1100);
+  }
+  function attachCopy(row) {
     const go = () => { const v = row.getAttribute('data-v') || ''; if (!v || v === '—') return;
-      (navigator.clipboard ? navigator.clipboard.writeText(v) : Promise.reject()).then(() => { row.classList.add('copied'); showToast(); setTimeout(() => row.classList.remove('copied'), 1000); }).catch(showToast); };
+      const out = row.querySelector('.kv-v');
+      copyText(v).then(() => flash(out, 'Copied')).catch(() => flash(out, 'Copy failed')); };
     row.addEventListener('click', go);
     row.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); go(); } }); }
   /* render a config / info object as copyable rows. A nested dict opens an
@@ -308,8 +370,8 @@ document.addEventListener('DOMContentLoaded', function () {
     return fmtScalar(v);
   }
   function kvRow(k, val) {
-    return '<div class="kv-row" tabindex="0" role="button" data-v="' + esc(val) + '">'
-      + '<span class="kv-k">' + esc(k) + '</span><span class="kv-v">' + esc(val) + '</span></div>';
+    return '<div class="kv-row" tabindex="0" role="button" title="Copy" data-v="' + esc(val) + '">'
+      + '<span class="kv-k">' + soft(k) + '</span><span class="kv-v">' + esc(val) + '</span></div>';
   }
   function kvHTML(obj) {
     let h = '';
@@ -342,275 +404,162 @@ document.addEventListener('DOMContentLoaded', function () {
      steps — which is why the training phase's step budget is remembered here
      instead of read from the live phase's max_step. */
   const spd = { ema: 0, lastStep: -1, lastT: 0, gradMax: 0 };
-  function updateSpeed(d, grad) { if (d.status !== 'training' || !grad || !d.max_step) return;
-    spd.gradMax = d.max_step;
-    const g = (Math.max(d.current_epoch, 1) - 1) * d.max_step + (d.current_step || 0), now = performance.now();
+  function updateSpeed(d, grad) { if (d.status !== 'training' || !grad || !d.current_step) return;
+    if (d.max_step) spd.gradMax = d.max_step;   /* a length-less phase has a rate, but no budget to count down */
+    const g = (Math.max(d.current_epoch, 1) - 1) * (d.max_step || 0) + d.current_step, now = performance.now();
     if (spd.lastStep >= 0 && g > spd.lastStep && spd.lastT) { const dt = (now - spd.lastT) / 1000; if (dt > 0.05) { const r = (g - spd.lastStep) / dt; spd.ema = spd.ema ? lerp(spd.ema, r, 0.3) : r; } }
     spd.lastStep = g; spd.lastT = now; }
   function etaSeconds(d) { if (!spd.ema || !spd.gradMax || !d.max_epoch || spd.lastStep < 0) return NaN;
     return Math.max(d.max_epoch * spd.gradMax - spd.lastStep, 0) / spd.ema; }
 
   /* ── the epoch's phase schedule ────────────────────────────
-     d.phases is the run's declared schedule, in order. Everything the gauge and
-     the badges need is read from it — no phase name is special-cased. */
-  let primaryPhase = 'train';   /* the run's first gradient phase — the series a chart leads with */
+     d.phases is the run's declared schedule, in order. Everything the bars
+     need is read from it — no phase name is special-cased. */
   function activePhases(d) {     /* the phases that actually run in this epoch */
     const e = d.current_epoch || 0;
     return (d.phases || []).filter((p) => e > 0 && e % (p.every || 1) === 0);
   }
-  function phaseOf(d, name) { return (d.phases || []).find((p) => p.name === name) || null; }
-  function isTrainingPhase(d, name) { const p = phaseOf(d, name); return p ? !!p.training : /^train$/i.test(name); }
-
-  /* ── metric helpers ────────────────────────────────────── */
-  /* a metric's epoch history for the primary phase, else the first phase that has one */
-  function primaryValues(phases) { if (!phases) return null;
-    if (phases[primaryPhase] && phases[primaryPhase].length) return phases[primaryPhase];
-    for (const k of Object.keys(phases)) if (phases[k] && phases[k].length) return phases[k]; return null; }
-  function metricNames(d) { return Array.from(new Set(Object.keys(d.epoch_metrics || {}).concat(Object.keys(d.last_step_metrics || {})))); }
-  function pickPrimary(d) { const names = metricNames(d); return names.find((n) => /loss/i.test(n)) || names[0] || null; }
-  function liveValue(d, m) { const sm = d.last_step_metrics || {}, vals = primaryValues((d.epoch_metrics || {})[m]);
-    return (typeof sm[m] === 'number') ? sm[m] : (vals ? vals[vals.length - 1] : undefined); }
 
   /* ── progress model — strictly monotonic ───────────────────
-     The overall run percentage and the progress bar advance through EVERY phase
-     of the epoch — training or not — each phase owning the slice of the epoch
-     that its step count is worth, and never rewind.
+     Progress advances through EVERY phase of the epoch — training or not — each
+     phase owning the slice of the epoch that its step count is worth, and never
+     rewinds.
 
      phaseBounds gives a phase its [start, end] slice of the epoch: the prefix of
      step counts before it over the epoch's total. When any phase's length is
      unknown (a length-less IterableDataset) no step count can be trusted, so the
      epoch is split evenly by phase count instead — coarser, still monotonic.
-     Updates that carry no active phase (the inter-phase metric flushes) return
-     null, so the caller holds the last value rather than dropping to zero. */
+     A step that cannot be placed inside its phase — the phase's length is
+     unknown — returns null, and the caller holds its place, the last value or
+     the start of the phase's slice, rather than dropping to zero. */
   function phaseBounds(d, name) {
     const act = activePhases(d), i = act.findIndex((p) => p.name === name);
     if (i < 0) return null;                                        /* phase outside the schedule */
     const sized = act.every((p) => (p.steps || 0) > 0);
     const total = sized ? act.reduce((s, p) => s + p.steps, 0) : act.length;
-    if (total <= 0) return null;
     const before = sized ? act.slice(0, i).reduce((s, p) => s + p.steps, 0) : i;
     const own = sized ? act[i].steps : 1;
     return [before / total, (before + own) / total];
   }
   function epochFraction(d) {
     const cs = d.current_step || 0, ms = d.max_step || 0;
-    if (!d.last_phase || ms <= 0 || cs <= 0) return null;          /* idle / flush — hold previous */
+    if (!d.last_phase || ms <= 0 || cs <= 0) return null;          /* no step, or no known length — the caller holds */
     const b = phaseBounds(d, d.last_phase);
     if (!b) return clamp(cs / ms, 0, 1);                           /* no schedule — the phase is the epoch */
     return clamp(b[0] + (b[1] - b[0]) * (cs / ms), 0, 1);
   }
-  const prog = { epFrac: 0, stepFrac: 0, phaseCol: 'var(--st-idle)', ran: false,
-                 lastGrad: false, lastPhase: '', lastMax: 0 };
+  const prog = { epoch: -1, epFrac: 0, held: false, lastPhase: '', lastMax: 0, lastStep: 0 };
 
-  /* ── gauge rings ───────────────────────────────────────── */
-  const RING_RUN_C = 779.11, RING_STEP_C = 628.32;
-  function setRing(id, circ, frac) {
-    const e = el(id); if (!e) return;
-    const f = clamp(frac, 0, 1);
-    e.style.strokeDashoffset = (circ * (1 - f)).toFixed(1);
-    e.style.opacity = f > 0.001 ? '1' : '0';   /* hide the round-cap dot at 0 % (e.g. standby) */
+  /* ── shared hover ──────────────────────────────────────────
+     One hovered epoch for the charts and the table. Pointing at an epoch in
+     either reads that epoch in both: every chart moves its crosshair and its
+     key shows that epoch's values. The progress bars above take no part — a
+     bar that moved under the pointer would no longer say where the run is. */
+  const hover = { e: 0 };
+  function setHover(e) {
+    if (e === hover.e) return;
+    const was = hover.e; hover.e = e;
+    Object.keys(charts).forEach(paintReadout);
+    [was, e].forEach((k) => { const row = tableRows[k]; if (row) row.toggleAttribute('data-hover', k === e); });
   }
 
-  /* machined bezel — 72 hairline ticks ringing the gauge, drawn once */
-  (function () {
-    const g = el('g-bezel'); if (!g) return;
-    let s = '';
-    for (let i = 0; i < 72; i++) {
-      const a = (i / 72) * 2 * Math.PI;
-      s += '<line x1="' + (150 + 131.5 * Math.cos(a)).toFixed(1) + '" y1="' + (150 + 131.5 * Math.sin(a)).toFixed(1)
-        + '" x2="' + (150 + 134 * Math.cos(a)).toFixed(1) + '" y2="' + (150 + 134 * Math.sin(a)).toFixed(1) + '"/>';
+  /* ── progress bars ─────────────────────────────────────────
+     Two bars, and neither grows with the run: a run of five epochs and one of
+     fifty thousand draw the same page. The upper is the whole run: a window
+     onto the spectrum from the first ink through the page's violet to the
+     second. Once the run is over, it takes the colour of how the run ended.
+     The lower is the epoch the run is in, one segment per phase that runs in
+     it — as wide as that phase's share of the epoch's steps, in that phase's
+     ink — so it shows which phase is running and how far along. */
+  const bars = { sig: '', fills: [] };
+  function paintRun(overall, ended) {
+    const w = (overall * 100).toFixed(2) + '%', fill = el('run-fill');
+    if (fill.style.getPropertyValue('--p') !== w) fill.style.setProperty('--p', w);
+    el('run-bar').dataset.state = ended ? 'ended' : 'live';   /* over → the status colour: gold, red or grey */
+  }
+  function paintEpoch(d, on) {
+    const act = activePhases(d), solo = prog.lastPhase || d.last_phase || '';
+    const list = act.length ? act : solo ? [{ name: solo, steps: 0 }] : [];   /* no schedule → the phase is the epoch */
+    on = on && list.length > 0;
+    show('epoch-bar', on); show('epoch-keys', on);
+    if (!on) { bars.sig = ''; return; }
+    const sized = list.every((p) => (p.steps || 0) > 0);
+    const sig = (d.current_epoch || 0) + '|' + list.map((p) => p.name + ':' + (sized ? p.steps : 1)).join('|');
+    if (sig !== bars.sig) {   /* rebuilt at every epoch, so a new epoch starts empty rather than draining */
+      bars.sig = sig;
+      el('epoch-bar').innerHTML = list.map((p) => '<i class="seg" style="flex-grow:' + (sized ? p.steps : 1)
+        + ';--ink:' + inkOf(p.name) + '"><b></b></i>').join('');
+      el('epoch-keys').innerHTML = list.map((p) => keyHTML(p.name)).join('');
+      bars.fills = Array.from(el('epoch-bar').querySelectorAll('b'));
     }
-    g.innerHTML = s;
-  })();
-
-  /* ── gauge detail — epoch divider ticks + the best-epoch ★, set around the
-     outer ring. The svg is rotated -90° so its 0° sits at top, so ticks use
-     plain angles; the ★ is counter-rotated +90° so the glyph stays upright. */
-  let gaugeSig = '';
-  function updateGauge(d) {
-    const marks = el('g-marks'); if (!marks) return;
-    const E = d.max_epoch || 0, best = d.best_epoch || 0, sig = E + ':' + best;
-    if (sig === gaugeSig) return;
-    gaugeSig = sig;
-    let s = '';
-    if (E >= 2 && E <= 48) {
-      for (let k = 0; k < E; k++) {
-        const a = (k / E) * 2 * Math.PI;
-        s += '<line class="g-tick" x1="' + (150 + 135 * Math.cos(a)).toFixed(1) + '" y1="' + (150 + 135 * Math.sin(a)).toFixed(1)
-          + '" x2="' + (150 + 142 * Math.cos(a)).toFixed(1) + '" y2="' + (150 + 142 * Math.sin(a)).toFixed(1) + '"/>';
-      }
-    }
-    if (best >= 1 && E) {
-      const a = ((best - 0.5) / E) * 2 * Math.PI;
-      const x = (150 + 142 * Math.cos(a)).toFixed(1), y = (150 + 142 * Math.sin(a)).toFixed(1);
-      s += '<text class="g-best" x="' + x + '" y="' + y + '" transform="rotate(90 ' + x + ' ' + y + ')"><title>Best epoch ' + best + '</title>★</text>';
-    }
-    marks.innerHTML = s;
+    list.forEach((p, i) => {
+      const b = phaseBounds(d, p.name);
+      const w = ((b ? clamp((prog.epFrac - b[0]) / (b[1] - b[0]), 0, 1) : prog.epFrac) * 100).toFixed(1) + '%';
+      if (bars.fills[i].style.width !== w) bars.fills[i].style.width = w;
+    });
   }
 
-  /* ── KPI cells ─────────────────────────────────────────── */
-  /* The live metric, throughput and ETA are instantaneous readings: they show
-     only while a step is actually running and blank to "—" otherwise — nothing
-     lingers once the run is idle or finished (the full history lives in the
-     charts below). The best-metric KPI is a standing record, so it persists. */
-  function updateKpis(d, primary, stepping) {
-    if (primary && stepping) {
-      setText('k-primary-label', titleCase(primary));
-      tween(el('k-primary'), liveValue(d, primary), fmt);
-      setText('k-primary-sub', titleCase(d.last_phase) + ' · step ' + (d.current_step || 0));
-    } else {
-      setText('k-primary-label', primary ? titleCase(primary) : 'Metric');
-      tween(el('k-primary'), undefined); setText('k-primary-sub', '—');
-    }
-    setText('k-best-label', 'Best ' + titleCase(d.monitor_phase || 'val') + ' ' + titleCase(d.monitor || 'loss'));
-    if (d.best_metric != null) {
-      el('k-best-star').style.display = '';
-      tween(el('k-best'), d.best_metric, fmt);
-      const ni = d.epochs_no_improve || 0;
-      setText('k-best-sub', 'epoch ' + d.best_epoch + (ni > 0 ? ' · ' + ni + ' since' : ''));
-    } else { el('k-best-star').style.display = 'none'; tween(el('k-best'), undefined); setText('k-best-sub', '—'); }
-  }
-
-  /* ── Step graph + aux stats — live signal in the hero flanks.
-     The step graph is an auto-scaled trace of the active phase's recent step
-     loss (train blue / val purple), shown only while a step is in progress —
-     in step with the throughput / ETA readouts. Aux stats carry learning rate
-     and GPU memory. ── */
-  let sparkData = null, sparkSig = '';
+  /* ── readings ──────────────────────────────────────────── */
   function fmtLR(v) {
     if (Array.isArray(v)) {   /* per-group learning rates → single value, pair, or range */
-      const u = Array.from(new Set(v.filter((x) => typeof x === 'number' && isFinite(x)))).sort((a, b) => a - b);
+      const u = Array.from(new Set(v.filter(isNum))).sort((a, b) => a - b);
       if (!u.length) return '—';
       if (u.length === 1) return fmtLR(u[0]);
       if (u.length === 2) return fmtLR(u[0]) + ' / ' + fmtLR(u[1]);
       return fmtLR(u[0]) + ' – ' + fmtLR(u[u.length - 1]);
     }
-    if (typeof v !== 'number' || !isFinite(v)) return '—';
+    if (!isNum(v)) return '—';
     if (v === 0) return '0';
     if (v < 1e-3 || v >= 1e4) return v.toExponential(2).replace(/\.?0+e/, 'e');  /* compact: 1.00e-4 → 1e-4 */
     return String(+v.toPrecision(3));
   }
-  function fmtGB(g) { return g >= 100 ? g.toFixed(0) : g.toFixed(g >= 10 ? 1 : 2); }
-  function isStepping(d) { return !!(d.last_phase && d.max_step && d.current_step) && d.status === 'training'; }
+  function fmtGB(g) { return g >= 100 ? g.toFixed(0) : g.toFixed(1); }
 
-  function sparkSVG(vals, W, H, phaseName, cap) {
-    const C = themeColors(), col = phasePal(C, [phaseName || 'train'])[0];   /* phase ink — echoes that phase's curve below */
-    const PADX = 3, PADT = 10, PADB = 8, n = vals.length;
-    let mn = Infinity, mx = -Infinity;
-    for (const v of vals) { if (v < mn) mn = v; if (v > mx) mx = v; }
-    if (mn === mx) { mn -= 0.5; mx += 0.5; }
-    /* strip chart: the pen head sits fixed at the right edge and the paper
-       scrolls beneath it — each sample advances the trace one fixed step
-       left, so the window fills the width exactly when the buffer is full */
-    const dx = (W - 2 * PADX) / Math.max((cap || n) - 1, 1);
-    const X = (i) => W - PADX - (n - 1 - i) * dx;
-    const Y = (v) => PADT + (1 - (v - mn) / (mx - mn)) * (H - PADT - PADB);
-    let dLine = '';
-    for (let i = 0; i < n; i++) dLine += (i ? 'L' : 'M') + X(i).toFixed(1) + ' ' + Y(vals[i]).toFixed(1);
-    const base = (H - PADB).toFixed(1);
-    const dArea = dLine + 'L' + X(n - 1).toFixed(1) + ' ' + base + 'L' + X(0).toFixed(1) + ' ' + base + 'Z';
-    const lx = X(n - 1).toFixed(1), ly = Y(vals[n - 1]).toFixed(1);
-    return '<svg viewBox="0 0 ' + W + ' ' + H + '" xmlns="http://www.w3.org/2000/svg">'
-      + '<defs><linearGradient id="spGrad" x1="0" y1="0" x2="0" y2="1">'
-      + '<stop offset="0" stop-color="' + col + '" stop-opacity="0.22"/>'
-      + '<stop offset="1" stop-color="' + col + '" stop-opacity="0"/></linearGradient>'
-      + '<pattern id="sgmm" x="' + PADX + '" y="' + PADT + '" width="12" height="12" patternUnits="userSpaceOnUse">'
-      + '<path d="M12 0H0V12" fill="none" stroke="' + C.grid1 + '" stroke-width="1"/></pattern></defs>'
-      + '<rect x="' + PADX + '" y="' + PADT + '" width="' + (W - 2 * PADX) + '" height="' + (H - PADT - PADB) + '" fill="url(#sgmm)"/>'
-      + '<line x1="' + (W - PADX) + '" y1="' + PADT + '" x2="' + (W - PADX) + '" y2="' + base + '" stroke="' + C.line + '" stroke-width="1"/>'
-      + '<path d="' + dArea + '" fill="url(#spGrad)"/>'
-      + '<path d="' + dLine + '" fill="none" stroke="' + col + '" stroke-width="2" '
-      + 'stroke-linejoin="round" stroke-linecap="round" vector-effect="non-scaling-stroke"/>'
-      + '<circle cx="' + lx + '" cy="' + ly + '" r="5.4" fill="' + col + '" opacity="0.18"/>'
-      + '<circle cx="' + lx + '" cy="' + ly + '" r="2.7" fill="' + col + '" stroke="' + C.panel + '" stroke-width="1.4"/>'
-      + '</svg>';
+  /* the best monitored value is a standing record: it persists between steps */
+  let bestKey = '';
+  function updateBest(d) {
+    const phase = d.monitor_phase || 'val', metric = String(d.monitor || 'loss').replace(/_/g, ' ');
+    if (bestKey !== phase + '|' + metric) {
+      bestKey = phase + '|' + metric;
+      el('best-label').innerHTML = 'Best' + keyHTML(phase) + '<span>' + esc(metric) + '</span>';
+    }
+    if (d.best_metric == null) {
+      setText('best-value', '—'); setText('best-note', 'No ' + phase + ' result yet.'); return;
+    }
+    setText('best-value', fmt(d.best_metric));
+    const ni = d.epochs_no_improve || 0, patience = (d.config || {}).patience;
+    setText('best-note', 'Epoch ' + count(d.best_epoch) + (ni === 0 ? ', the most recent.'
+      : '. No improvement for ' + count(ni) + (ni === 1 ? ' epoch' : ' epochs') + (isNum(patience) && patience > 0 ? ' (patience ' + patience + ').' : '.')));
   }
 
-  function renderSpark(d) {
-    sparkData = d;
-    const body = el('spark-body'); if (!body) return;
-    /* shown only while a step is actually running — like throughput / ETA, and
-       nothing lingers once the run is idle or finished */
-    const stepping = isStepping(d), ph = d.step_loss_phase || '';
-    const vals = (stepping && Array.isArray(d.step_loss)) ? d.step_loss.filter((v) => typeof v === 'number' && isFinite(v)) : [];
-    if (vals.length) {
-      let mn = Infinity, mx = -Infinity;
-      for (const v of vals) { if (v < mn) mn = v; if (v > mx) mx = v; }
-      const f = d.step_loss_first, l = d.step_loss_last;   /* real step numbers, not the sample count */
-      setText('sp-win', (typeof f === 'number' && typeof l === 'number')
-        ? (f === l ? 'step ' + l : 'steps ' + f + '–' + l) : '—');
-      setText('sp-range', 'min ' + fmt(mn) + ' · max ' + fmt(mx));
-    } else {
-      setText('sp-win', '—'); setText('sp-range', '—');
-    }
-    const phEl = el('sg-phase');
-    if (phEl) {
-      if (stepping && ph) { phEl.style.display = ''; phEl.textContent = titleCase(ph);
-        phEl.className = 'hm-phase ' + (isTrainingPhase(d, ph) ? 'is-train' : 'is-eval'); }
-      else phEl.style.display = 'none';
-    }
-    const W = Math.max(80, Math.round(body.clientWidth || 240));
-    const sig = (stepping ? 1 : 0) + '|' + vals.length + '|' + (vals.length ? vals[vals.length - 1] : '')
-      + '|' + ph + '|' + (d.step_loss_first || '') + '|' + themeEpoch + '|' + W;
-    if (sig === sparkSig) return;
-    sparkSig = sig;
-    if (!vals.length) { body.innerHTML = '<div class="spark-empty">' + (stepping ? 'awaiting steps…' : '—') + '</div>'; return; }
-    const H = Math.max(40, Math.round(body.clientHeight || 120));
-    /* the window length is the payload's own step_loss_cap — sparkSVG falls back
-       to the sample count if it is ever absent, so no constant is duplicated here */
-    body.innerHTML = sparkSVG(vals, W, H, ph, d.step_loss_cap);
-  }
-
-  /* Learning rate and GPU memory are standing telemetry — like the best-metric
-     KPI they persist rather than blanking between steps. */
-  function updateTelemetry(d) {
-    const lr = d.learning_rate;
-    setText('k-lr', fmtLR(lr));
-    const lrEl = el('k-lr');   /* multi-group LRs: hover to read every group's rate */
-    const nGroups = Array.isArray(lr) ? new Set(lr.filter((x) => typeof x === 'number' && isFinite(x))).size : 0;
-    if (lrEl) { lrEl.title = Array.isArray(lr) ? lr.map((x) => fmtLR(x)).join(', ') : '';
-      lrEl.classList.toggle('is-range', nGroups > 1); }   /* a range is wider — shrink to fit the cell */
-    setText('k-lr-sub', nGroups > 1 ? nGroups + ' groups' : '');
-
-    const gu = d.gpu_mem_used, gt = d.gpu_mem_total, gpuEl = el('stat-gpu');
-    if (!gpuEl) return;
-    if (typeof gu === 'number' && typeof gt === 'number' && gt > 0) {
-      gpuEl.style.display = '';
+  function updateFacts(d, running, done, halted, endLabel) {
+    show('fact-speed', running && spd.ema > 0);   /* a rate belongs to a run that is moving */
+    setText('f-speed', (spd.ema < 10 ? spd.ema.toFixed(1) : String(Math.round(spd.ema))) + ' it/s');
+    /* the last learning rate and memory reading say nothing about a finished run */
+    const lr = d.learning_rate, lrEl = el('f-lr');
+    show('fact-lr', !done && lr != null);
+    setText('f-lr', fmtLR(lr));
+    lrEl.title = Array.isArray(lr) ? 'Per group: ' + lr.map((x) => fmtLR(x)).join(', ') : '';
+    const gu = d.gpu_mem_used, gt = d.gpu_mem_total, has = !done && isNum(gu) && isNum(gt) && gt > 0;
+    show('fact-gpu', has);
+    if (has) {
       const r = clamp(gu / gt, 0, 1);
-      setText('k-gpu-pct', Math.round(r * 100) + '%');
-      setText('k-gpu', fmtGB(gu) + ' / ' + fmtGB(gt) + ' GB');
-      const bar = el('gpu-bar');
-      if (bar) { bar.style.width = (r * 100).toFixed(1) + '%';
-        bar.style.background = r > 0.9 ? 'var(--bad)' : 'var(--good)'; }
-    } else gpuEl.style.display = 'none';
+      setText('f-gpu', fmtGB(gu) + ' of ' + fmtGB(gt) + ' GB');
+      el('gpu-bar').style.width = (r * 100).toFixed(1) + '%';
+      el('gpu-meter').dataset.level = r > 0.9 ? 'high' : 'ok';   /* near capacity — the bar turns red */
+    }
+    setText('f-start', d.started_at || '—');
+    setText('f-elapsed-label', done ? 'Duration' : 'Elapsed');
+    setText('f-elapsed', d.elapsed || '—');
+    show('fact-end', done || halted);
+    setText('f-end-label', endLabel);
+    setText('f-end', d.updated_at || '—');
+    show('live', !done && ['live-chart', 'fact-steps', 'fact-speed', 'fact-lr', 'fact-gpu'].some((id) => !el(id).hidden));
   }
 
-  const sparkRO = new ResizeObserver(() => { if (sparkData) renderSpark(sparkData); });
-  (function () { const sb = el('spark-body'); if (sb) sparkRO.observe(sb); })();
-
-  /* ════════════════════════════════════════════════════════
-     SVG CHART ENGINE — dependency-free metric history.
-     Pure vector: hairline grid, per-phase curves, best-epoch
-     marker, logarithmic toggle, hover readout, and native
-     SVG export. Colours are read from the active theme.
-     ════════════════════════════════════════════════════════ */
-  const charts = {};
-  let bestEpochGlobal = 0;
-  /* plot padding — the left and bottom gutters carry the tick values *and* the
-     axis titles (metric name on Y, "Epoch" on X), so they are deeper than the
-     other two sides */
-  const PL = 58, PR = 18, PT = 30, PB = 46;
-  const cid = (m) => m.replace(/[^a-zA-Z0-9_-]/g, '_');
-
-  function xTickStep(n, plotW) {
-    const target = Math.max(4, Math.floor(plotW / 96));
-    const raw = Math.max(n / target, 1), p = Math.pow(10, Math.floor(Math.log10(raw)));
-    for (const m of [1, 2, 5, 10]) if (m * p >= raw) return m * p; return 10 * p;
-  }
-
-  /* nice axis ticks — linear ticks land on 1·2·2.5·5 steps; log ticks
+  /* ── nice axis ticks — linear ticks land on 1·2·2.5·5 steps; log ticks
      snap to powers of ten (with 2× / 5× mantissas when decades are few),
-     falling back to nice raw values inside a single decade */
+     falling back to nice raw values inside a single decade ── */
   function niceTicksLinear(mn, mx, target) {
     const span = mx - mn;
     if (!(span > 0) || !isFinite(span)) return [mn];
@@ -619,7 +568,7 @@ document.addEventListener('DOMContentLoaded', function () {
     let st = 10 * p;
     for (const m of [1, 2, 2.5, 5, 10]) if (m * p >= raw) { st = m * p; break; }
     const out = [];
-    for (let v = Math.ceil(mn / st) * st; v <= mx + st * 1e-6; v += st) out.push(v);
+    for (let v = Math.ceil(mn / st) * st; v <= mx + st * 1e-6 && out.length < 64; v += st) out.push(v);   /* capped: a step below the value's own precision would never arrive */
     return out;
   }
   function logTicks(mnL, mxL, target) {
@@ -627,10 +576,10 @@ document.addEventListener('DOMContentLoaded', function () {
     if (span >= 1) {
       const out = [];
       const step = Math.max(1, Math.round(span / Math.max(target, 1)));
-      for (let d = Math.ceil(mnL); d <= Math.floor(mxL) + 1e-9; d += step) out.push(d);
+      for (let k = Math.ceil(mnL); k <= Math.floor(mxL) + 1e-9; k += step) out.push(k);
       if (out.length < 3 && span < 3) {
-        for (let d = Math.floor(mnL) - 1; d <= Math.ceil(mxL); d++)
-          for (const m of [2, 5]) { const lv = d + Math.log10(m); if (lv > mnL && lv < mxL) out.push(lv); }
+        for (let k = Math.floor(mnL) - 1; k <= Math.ceil(mxL); k++)
+          for (const m of [2, 5]) { const lv = k + Math.log10(m); if (lv > mnL && lv < mxL) out.push(lv); }
         out.sort((a, b) => a - b);
       }
       if (out.length >= 2) return out;
@@ -644,233 +593,362 @@ document.addEventListener('DOMContentLoaded', function () {
     if (a < 1e-3 || a >= 1e5) return v.toExponential(0).replace('+', '');
     return String(+v.toFixed(a < 1 ? 4 : a < 10 ? 3 : a < 100 ? 2 : 1));
   }
-
-  function chartSVG(metric, phases, useLog, bestEpoch, W, H, ch) {
-    const C = themeColors();
-    const tf = useLog ? Math.log10 : (v) => v;
-    const series = Object.entries(phases).filter(([, v]) => v && v.length);
-    if (!series.length) return '';
-    const maxLen = Math.max.apply(null, series.map(([, v]) => v.length));
-    let mn = Infinity, mx = -Infinity;
-    series.forEach(([, v]) => v.forEach((x) => { if (useLog && x <= 0) return; const y = tf(x); if (y < mn) mn = y; if (y > mx) mx = y; }));
-    if (!isFinite(mn)) { mn = 0; mx = 1; }
-    if (mn === mx) { mn -= 0.5; mx += 0.5; }
-    const padY = (mx - mn) * 0.08; mn -= padY; mx += padY;
-    const X = (i) => maxLen < 2 ? PL + (W - PL - PR) / 2 : PL + (i / (maxLen - 1)) * (W - PL - PR);
-    const Y = (v) => PT + (1 - (tf(v) - mn) / (mx - mn)) * (H - PT - PB);
-    const k = cid(metric), pal = phasePal(C, series.map(([p]) => p));
-    if (ch) ch.geom = { X, Y, maxLen, series, pal };   /* shared with hover for the readout dots */
-    let s = '<svg id="svg-' + k + '" viewBox="0 0 ' + W + ' ' + H + '" xmlns="http://www.w3.org/2000/svg" font-family="IBM Plex Mono, ui-monospace, monospace">';
-    s += '<defs>';
-    series.forEach((_, i) => { const c = pal[i];
-      s += '<linearGradient id="g-' + k + '-' + i + '" x1="0" y1="0" x2="0" y2="1">'
-        + '<stop offset="0" stop-color="' + c + '" stop-opacity="0.13"/>'
-        + '<stop offset="0.8" stop-color="' + c + '" stop-opacity="0.01"/>'
-        + '<stop offset="1" stop-color="' + c + '" stop-opacity="0"/></linearGradient>'; });
-    /* graph paper — a two-tier engineering grid clipped to the plot and
-       anchored at its corner; the labelled nice-tick rules carry the reading */
-    s += '<pattern id="mm-' + k + '" x="' + PL + '" y="' + PT + '" width="12" height="12" patternUnits="userSpaceOnUse">'
-      + '<path d="M12 0H0V12" fill="none" stroke="' + C.grid1 + '" stroke-width="1"/></pattern>'
-      + '<pattern id="cm-' + k + '" x="' + PL + '" y="' + PT + '" width="60" height="60" patternUnits="userSpaceOnUse">'
-      + '<path d="M60 0H0V60" fill="none" stroke="' + C.grid2 + '" stroke-width="1"/></pattern>';
-    s += '</defs>';
-    const PW = W - PL - PR, PH = H - PT - PB;
-    s += '<rect x="' + PL + '" y="' + PT + '" width="' + PW + '" height="' + PH + '" fill="url(#mm-' + k + ')"/>'
-      + '<rect x="' + PL + '" y="' + PT + '" width="' + PW + '" height="' + PH + '" fill="url(#cm-' + k + ')"/>';
-    /* y grid — nice ticks; on log scale they snap to powers of ten */
-    const yTicks = useLog ? logTicks(mn, mx, Math.max(3, Math.round((H - PT - PB) / 52)))
-                          : niceTicksLinear(mn, mx, Math.max(3, Math.round((H - PT - PB) / 52)));
-    yTicks.forEach((tv) => {
-      const gy = PT + (1 - (tv - mn) / (mx - mn)) * (H - PT - PB);
-      if (gy < PT - 0.5 || gy > H - PB + 0.5) return;
-      s += '<line x1="' + PL + '" y1="' + gy.toFixed(1) + '" x2="' + (W - PR) + '" y2="' + gy.toFixed(1) + '" stroke="' + C.line + '" stroke-width="1" vector-effect="non-scaling-stroke"/>';
-      s += '<text x="' + (PL - 9) + '" y="' + (gy + 3.8).toFixed(1) + '" text-anchor="end" font-size="11" fill="' + C.faint + '">' + fmtTick(useLog ? Math.pow(10, tv) : tv) + '</text>';
-    });
-    /* sheet frame — the recorder paper's edge */
-    s += '<rect x="' + PL + '" y="' + PT + '" width="' + PW + '" height="' + PH + '" fill="none" stroke="' + C.line + '" stroke-width="1" vector-effect="non-scaling-stroke"/>';
-    /* x labels — epoch numbers */
-    const st = xTickStep(maxLen, W - PL - PR);
-    for (let e = st; e <= maxLen; e += st) {
-      s += '<text x="' + X(e - 1).toFixed(1) + '" y="' + (H - PB + 19) + '" text-anchor="middle" font-size="11" fill="' + C.faint + '">' + e + '</text>';
+  function xTickStep(n, plotW) {
+    const target = Math.max(4, Math.floor(plotW / 90));
+    const raw = Math.max(n / target, 1), p = Math.pow(10, Math.floor(Math.log10(raw)));
+    for (const m of [1, 2, 5, 10]) if (m * p >= raw) return m * p; return 10 * p;
+  }
+  /* an SVG path through the drawable points, lifting the pen over the gaps
+     (a metric that went non-finite arrives as null) */
+  function pathOf(n, at, ok, stride) {
+    let s = '', pen = false;
+    for (let j = 0; j < n; j++) {
+      if (!ok(j)) { pen = false; continue; }
+      if (stride > 1 && j % stride && j !== n - 1 && pen && ok(j + 1)) continue;
+      s += (pen ? 'L' : 'M') + at(j); pen = true;
     }
-    /* axis titles — lowercase "epoch" beneath the x ticks, the metric name
-       (lowercase) rotated up the y gutter; a quiet, understated caption */
-    const axMidX = PL + (W - PL - PR) / 2, axMidY = PT + (H - PT - PB) / 2;
-    const yTitle = String(metric).replace(/_/g, ' ').toLowerCase();
-    s += '<text x="' + axMidX.toFixed(1) + '" y="' + (H - 7) + '" text-anchor="middle" font-size="11" letter-spacing="0.3" fill="' + C.dim + '">epoch</text>';
-    s += '<text x="15" y="' + axMidY.toFixed(1) + '" text-anchor="middle" font-size="11" letter-spacing="0.3" fill="' + C.dim + '" transform="rotate(-90 15 ' + axMidY.toFixed(1) + ')">' + esc(yTitle) + '</text>';
-    /* best-epoch marker */
-    if (bestEpoch && bestEpoch >= 1 && bestEpoch <= maxLen) {
-      const bx = X(bestEpoch - 1);
-      s += '<line x1="' + bx.toFixed(1) + '" y1="' + PT + '" x2="' + bx.toFixed(1) + '" y2="' + (H - PB) + '" stroke="' + C.gold + '" stroke-opacity="0.55" stroke-width="1" stroke-dasharray="3 4" vector-effect="non-scaling-stroke"/>';
-      s += '<text x="' + bx.toFixed(1) + '" y="' + (PT - 8) + '" text-anchor="middle" font-size="10.5" font-weight="600" fill="' + C.gold + '">★ best</text>';
-    }
-    /* series: area + line (stride-downsampled when very long) */
-    const stride = maxLen > 1500 ? Math.ceil(maxLen / 1500) : 1;
-    series.forEach(([, vals], i) => {
-      const c = pal[i];
-      let dLine = '', first = true, lastI = 0;
-      for (let j = 0; j < vals.length; j += stride) {
-        if (useLog && vals[j] <= 0) continue;
-        dLine += (first ? 'M' : 'L') + X(j).toFixed(1) + ' ' + Y(vals[j]).toFixed(1); first = false; lastI = j;
-      }
-      const le = vals.length - 1;
-      if (lastI !== le && !(useLog && vals[le] <= 0)) dLine += 'L' + X(le).toFixed(1) + ' ' + Y(vals[le]).toFixed(1);
-      if (!dLine) return;
-      const dArea = dLine + 'L' + X(le).toFixed(1) + ' ' + (H - PB) + 'L' + X(0).toFixed(1) + ' ' + (H - PB) + 'Z';
-      s += '<path d="' + dArea + '" fill="url(#g-' + k + '-' + i + ')"/>';
-      s += '<path d="' + dLine + '" fill="none" stroke="' + c + '" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" vector-effect="non-scaling-stroke"/>';
-    });
-    /* hover crosshair + one readout dot per series (positioned by attachHover) */
-    s += '<line class="hovline" x1="0" y1="' + PT + '" x2="0" y2="' + (H - PB) + '" stroke="' + C.faint + '" stroke-opacity="0.6" stroke-width="1" vector-effect="non-scaling-stroke" visibility="hidden"/>';
-    series.forEach((_, i) => { s += '<circle class="hovdot" r="4" fill="' + pal[i] + '" stroke="' + C.panel + '" stroke-width="1.6" visibility="hidden"/>'; });
-    s += '</svg>';
     return s;
   }
 
-  /* shared hover tooltip */
-  const tip = document.createElement('div'); tip.className = 'tip'; document.body.appendChild(tip);
-  function attachHover(card, metric) {
-    const body = card.querySelector('.chart-body');
-    body.addEventListener('pointermove', (e) => {
-      const ch = charts[metric], svg = body.querySelector('svg');
-      if (!ch || !svg || !ch.phases) return;
-      const rect = svg.getBoundingClientRect();
-      const series = Object.entries(ch.phases).filter(([, v]) => v && v.length);
-      if (!series.length) return;
-      const maxLen = Math.max.apply(null, series.map(([, v]) => v.length));
-      const W = svg.viewBox.baseVal.width;
-      const xv = (e.clientX - rect.left) / rect.width * W;
-      const idx = clamp(Math.round((xv - PL) / Math.max(W - PL - PR, 1) * (maxLen - 1)), 0, maxLen - 1);
-      const gx = maxLen < 2 ? PL + (W - PL - PR) / 2 : PL + (idx / (maxLen - 1)) * (W - PL - PR);
-      const hov = svg.querySelector('.hovline');
-      if (hov) { hov.setAttribute('x1', gx); hov.setAttribute('x2', gx); hov.setAttribute('visibility', 'visible'); }
-      const dots = svg.querySelectorAll('.hovdot');
-      series.forEach(([, vals], i) => { const dot = dots[i]; if (!dot) return;
-        if (ch.geom && idx < vals.length && (!ch.log || vals[idx] > 0)) {
-          dot.setAttribute('cx', ch.geom.X(idx).toFixed(1)); dot.setAttribute('cy', ch.geom.Y(vals[idx]).toFixed(1));
-          dot.setAttribute('visibility', 'visible');
-        } else dot.setAttribute('visibility', 'hidden'); });
-      const C = themeColors(), pal = phasePal(C, series.map(([p]) => p));
-      let html = '<div class="tip-title">Epoch ' + (idx + 1) + '</div>';
-      series.forEach(([ph, vals], i) => { if (idx >= vals.length) return;
-        html += '<div class="tip-row"><span class="tk"><i style="background:' + pal[i] + '"></i>' + esc(titleCase(ph)) + '</span><span class="tv">' + fmt(vals[idx]) + '</span></div>'; });
-      tip.innerHTML = html; tip.classList.add('show');
-      const tw = tip.offsetWidth, th = tip.offsetHeight;
-      let px = e.clientX + 14, py = e.clientY - th - 10;
-      if (px + tw > window.innerWidth - 8) px = e.clientX - tw - 14;
-      if (py < 8) py = e.clientY + 16;
-      tip.style.left = px + 'px'; tip.style.top = py + 'px';
-    });
-    body.addEventListener('pointerleave', () => { tip.classList.remove('show');
-      const hov = body.querySelector('.hovline'); if (hov) hov.setAttribute('visibility', 'hidden');
-      body.querySelectorAll('.hovdot').forEach((dt) => dt.setAttribute('visibility', 'hidden')); });
+  /* ── live step loss ────────────────────────────────────────
+     The recent per-step loss of the phase that is running, as a strip chart: the
+     newest sample sits at the right edge and the window scrolls left beneath it.
+     Raw samples are noisy, so a smoothed line is drawn over them — the raw trace
+     stays visible underneath, because smoothing alone hides spikes. */
+  const live = { sig: '', d: null };
+  function smooth(vals) {   /* bias-corrected exponential moving average */
+    const out = [], k = 0.18; let acc = 0, w = 0;
+    for (const v of vals) { acc = (1 - k) * acc + k * v; w = (1 - k) * w + k; out.push(acc / w); }
+    return out;
   }
+  /* a soft fall of the line's own ink beneath it — the fill that gives a curve its weight */
+  function washDef(id, col) {
+    return '<linearGradient id="' + id + '" x1="0" y1="0" x2="0" y2="1"><stop offset="0" style="stop-color:' + col + ';stop-opacity:0.22"/>'
+      + '<stop offset="1" style="stop-color:' + col + ';stop-opacity:0"/></linearGradient>';
+  }
+  function liveSVG(vals, W, H, col, cap) {
+    const PL = 40, PR = 6, PT = 8, PB = 6, n = vals.length, sm = smooth(vals);
+    let mn = Math.min.apply(null, vals), mx = Math.max.apply(null, vals);
+    if (mn === mx) { mn -= 0.5; mx += 0.5; }
+    const pad = (mx - mn) * 0.06; mn -= pad; mx += pad;
+    /* the trace spans the plot until the window fills, then scrolls */
+    const dx = (W - PL - PR) / Math.max(Math.min(n, cap || n) - 1, 1);
+    const X = (i) => n === 1 ? W - PR : PL + i * dx;
+    const Y = (v) => PT + (1 - (v - mn) / (mx - mn)) * (H - PT - PB);
+    const at = (arr) => (j) => X(j).toFixed(1) + ' ' + Y(arr[j]).toFixed(1);
+    let s = '<svg viewBox="0 0 ' + W + ' ' + H + '" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Recent loss per step">'
+      + '<defs>' + washDef('wash-live', col) + '</defs>';
+    niceTicksLinear(mn, mx, 3).forEach((tv) => { const gy = Y(tv).toFixed(1);
+      s += '<line class="gridline" x1="' + PL + '" y1="' + gy + '" x2="' + W + '" y2="' + gy + '"/>'
+        + '<text class="tick" x="0" y="' + (+gy + 4) + '">' + fmtTick(tv) + '</text>'; });
+    const line = pathOf(n, at(sm), () => true, 1);
+    if (n > 1) s += '<path class="wash" fill="url(#wash-live)" d="' + line + 'L' + X(n - 1).toFixed(1) + ' ' + (H - PB) + 'L' + X(0).toFixed(1) + ' ' + (H - PB) + 'Z"/>';
+    s += '<path class="raw" style="stroke:' + col + '" d="' + pathOf(n, at(vals), () => true, 1) + '"/>'
+      + '<path class="series" style="stroke:' + col + '" d="' + line + '"/>'
+      + '<circle class="enddot" style="fill:' + col + '" r="4.5" cx="' + X(n - 1).toFixed(1) + '" cy="' + Y(sm[n - 1]).toFixed(1) + '"/>';
+    return s + '</svg>';
+  }
+  function renderLive(d) {
+    live.d = d;
+    const vals = Array.isArray(d.step_loss) ? d.step_loss.filter(isNum) : [];
+    const ph = d.step_loss_phase, on = d.status !== 'completed' && vals.length > 0;   /* a sample always arrives with its phase */
+    show('live-chart', on);
+    if (!on) { live.sig = ''; return; }
+    const body = el('live-plot'), W = Math.max(160, Math.round(body.clientWidth || 320)), H = Math.round(body.clientHeight || 132);
+    const first = d.step_loss_first, last = d.step_loss_last;   /* real step numbers, not the sample count */
+    const sig = vals.length + '|' + vals[vals.length - 1] + '|' + ph + '|' + first + '|' + W;
+    if (sig === live.sig) return;
+    live.sig = sig;
+    el('live-label').innerHTML = 'Step loss' + keyHTML(ph);
+    setText('live-now', fmt(vals[vals.length - 1]));
+    setText('live-note', isNum(first) && isNum(last) && last > first
+      ? 'Steps ' + count(first) + ' to ' + count(last) : isNum(last) && last > 0 ? 'Step ' + count(last) : '');
+    body.innerHTML = liveSVG(vals, W, H, inkOf(ph), d.step_loss_cap);
+  }
+  new ResizeObserver(() => { if (live.d) renderLive(live.d); }).observe(el('live-plot'));
 
-  /* export the chart as a standalone SVG that mirrors the on-page card: a
-     header band (title + per-phase legend) over the plot, on the theme bg */
-  function saveSVG(metric) {
-    const svg = document.getElementById('svg-' + cid(metric)); if (!svg) return;
-    const C = themeColors(), NS = 'http://www.w3.org/2000/svg';
-    const vb = svg.getAttribute('viewBox').split(' ');
-    const W = +vb[2], H = +vb[3], HEAD = 42;
-    const clone = svg.cloneNode(true); clone.removeAttribute('id');
-    const hov = clone.querySelector('.hovline'); if (hov) hov.remove();
-    clone.querySelectorAll('.hovdot').forEach((dt) => dt.remove());
-    const inner = clone.innerHTML;
-    const title = titleCase(metric);
-    const SANS = 'IBM Plex Sans, system-ui, sans-serif';
-    let head = '<text x="' + PL + '" y="26" font-family="' + SANS + '" font-size="15" font-weight="700" fill="' + C.text + '">' + esc(title) + '</text>';
-    let lx = PL + title.length * 8.6 + 22;
-    const ch = charts[metric];
-    if (ch && ch.phases) {
-      const ser = Object.entries(ch.phases).filter(([, v]) => v && v.length);
-      const pal = phasePal(C, ser.map(([p]) => p));
-      ser.forEach(([ph], i) => { const name = titleCase(ph);
-        head += '<circle cx="' + lx + '" cy="21" r="3.4" fill="' + pal[i] + '"/>';
-        head += '<text x="' + (lx + 9) + '" y="25" font-family="' + SANS + '" font-size="12" fill="' + C.dim + '">' + esc(name) + '</text>';
-        lx += 9 + name.length * 7.1 + 18; });
+  /* The running step's other metrics, as rows above the speed reading; gone
+     once the run reports its end, while a run gone Offline keeps the last it
+     sent. A run may report twenty of them, and a rail of twenty ticking numbers
+     reads as none — so the first few show, and a control opens the rest. */
+  const STEP_ROWS = 4;
+  const steps = { open: false, sig: '' };
+  function renderStepFacts(d) {
+    const sm = d.last_step_metrics || {};
+    const names = Object.keys(sm).filter((m) => m !== 'loss' && isNum(sm[m]));
+    /* the flush between two phases carries no step metrics — hold the last rows
+       through it rather than collapsing the list for half a second */
+    if (!names.length) { if (d.status !== 'training') show('fact-steps', false); return; }
+    show('fact-steps', true);
+    const shown = steps.open ? names : names.slice(0, STEP_ROWS), rest = names.length - STEP_ROWS;
+    const host = el('fact-steps'), sig = names.join('\n') + '|' + steps.open;
+    if (sig === steps.sig) {   /* same rows: only the numbers move, and the control keeps its focus */
+      host.querySelectorAll('dd').forEach((dd, i) => setTextOf(dd, fmt(sm[shown[i]])));
+      return;
     }
-    const out = '<svg xmlns="' + NS + '" viewBox="0 0 ' + W + ' ' + (H + HEAD) + '" font-family="IBM Plex Mono, ui-monospace, monospace">'
-      + '<rect width="' + W + '" height="' + (H + HEAD) + '" fill="' + C.panel + '"/>'
-      + head + '<g transform="translate(0 ' + HEAD + ')">' + inner + '</g></svg>';
-    const blob = new Blob(['<?xml version="1.0" encoding="UTF-8"?>\n' + out], { type: 'image/svg+xml' });
-    const a = document.createElement('a'); a.download = metric.replace(/_/g, '-') + '.svg';
-    a.href = URL.createObjectURL(blob); a.click();
-    setTimeout(() => URL.revokeObjectURL(a.href), 4000);
+    steps.sig = sig;
+    host.innerHTML = shown.map((m) => '<dt>Step ' + esc(String(m).replace(/_/g, ' ')) + '</dt><dd>' + fmt(sm[m]) + '</dd>').join('')
+      + (rest > 0 ? '<button class="toggle more" type="button" aria-expanded="' + steps.open + '">' + (steps.open ? 'Show fewer' : 'Show ' + rest + ' more') + '</button>' : '');
+  }
+  el('fact-steps').addEventListener('click', (ev) => {
+    if (!ev.target.closest('.more')) return;
+    steps.open = !steps.open;
+    if (lastData) renderStepFacts(lastData);
+  });
+
+  /* ════════════════════════════════════════════════════════
+     Metric charts — dependency-free SVG, one per metric.
+     Every colour is a custom property, so the drawing is theme-agnostic; the
+     key above each plot doubles as its readout (latest epoch, or the hovered
+     one), which is why there is no floating tooltip.
+     ════════════════════════════════════════════════════════ */
+  const charts = {};
+  let bestEpoch = 0, dataLen = 0, monPhase = '';
+  /* Edges are shared, not approximated: the tick labels and the axis name start
+     where the title above them starts, the gridlines run out to where the scale
+     toggle ends, and PR is the room the end dot and its ring need to stay
+     inside that same line. */
+  const PL = 40, PR = 6, PT = 20, PB = 26;
+  const seriesOf = (phases) => Object.entries(phases || {}).filter(([, v]) => v && v.some(isNum));
+
+  function chartSVG(metric, ch, W, H) {
+    const useLog = ch.log, tf = useLog ? Math.log10 : (v) => v;
+    const ok = (v) => isNum(v) && (!useLog || v > 0);
+    const series = seriesOf(ch.phases);
+    /* one wash per chart, under the phase the run is judged by — two would mix to mud */
+    const washed = Math.max(series.findIndex(([ph]) => ph === monPhase), 0);
+    const maxLen = Math.max.apply(null, series.map(([, v]) => v.length));
+    let mn = Infinity, mx = -Infinity;
+    series.forEach(([, v]) => v.forEach((x) => { if (!ok(x)) return; const y = tf(x); if (y < mn) mn = y; if (y > mx) mx = y; }));
+    if (!isFinite(mn)) { mn = 0; mx = 1; }
+    if (mn === mx) { mn -= 0.5; mx += 0.5; }
+    const padY = (mx - mn) * 0.06; mn -= padY; mx += padY;
+    const PW = W - PL - PR, PH = H - PT - PB;
+    const X = (i) => maxLen < 2 ? PL + PW / 2 : PL + (i / (maxLen - 1)) * PW;
+    const Y = (v) => PT + (1 - (tf(v) - mn) / (mx - mn)) * PH;
+    ch.geom = { X, Y, ok, maxLen, series };   /* shared with the hover readout */
+    let s = '<svg viewBox="0 0 ' + W + ' ' + H + '" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="' + esc(words(metric)) + ' per epoch">'
+      + '<defs>' + washDef('wash-' + ch.uid, inkOf(series[washed][0])) + '</defs>';
+    /* y grid — nice ticks; on a log scale they snap to powers of ten */
+    const want = Math.max(3, Math.round(PH / 56));
+    (useLog ? logTicks(mn, mx, want) : niceTicksLinear(mn, mx, want)).forEach((tv) => {
+      const gy = PT + (1 - (tv - mn) / (mx - mn)) * PH;
+      if (gy < PT - 0.5 || gy > H - PB + 0.5) return;
+      s += '<line class="gridline" x1="' + PL + '" y1="' + gy.toFixed(1) + '" x2="' + W + '" y2="' + gy.toFixed(1) + '"/>'
+        + '<text class="tick" x="0" y="' + (gy + 4).toFixed(1) + '">' + fmtTick(useLog ? Math.pow(10, tv) : tv) + '</text>';
+    });
+    /* x labels — epoch numbers, named once in the corner the two axes share */
+    const st = xTickStep(maxLen, PW);
+    for (let e = st; e <= maxLen; e += st) {
+      const tx = X(e - 1), last = tx > W - PR - 12;   /* the label under the last point ends where the plot does */
+      s += '<text class="tick" x="' + (last ? W : tx).toFixed(1) + '" y="' + (H - 7) + '" text-anchor="' + (last ? 'end' : 'middle') + '">' + count(e) + '</text>';
+    }
+    s += '<text class="tick" x="0" y="' + (H - 7) + '">epoch</text>';
+    /* best epoch — one rule through every chart, named at its head. While the
+       best epoch is still the latest the rule would only shadow the end dots,
+       so it waits until the curves have moved on from it. */
+    if (bestEpoch >= 1 && bestEpoch < maxLen) {
+      const bx = X(bestEpoch - 1), right = bx > W - PR - 18;
+      s += '<line class="bestline" x1="' + bx.toFixed(1) + '" y1="' + (PT - 4) + '" x2="' + bx.toFixed(1) + '" y2="' + (H - PB) + '"/>'
+        + '<text class="besttext" x="' + (right ? W - PR : bx).toFixed(1) + '" y="' + (PT - 9) + '" text-anchor="' + (right ? 'end' : 'middle') + '">best</text>';
+    }
+    /* series — a line and its end dot (stride-downsampled when very long),
+       the monitored one over a wash of its own ink. A wash needs an unbroken
+       line to hang from; a point with no neighbour to join gets a dot of its
+       own, or a phase that runs every few epochs would draw nothing at all. */
+    const stride = maxLen > 1500 ? Math.ceil(maxLen / 1500) : 1, floor = H - PB;
+    series.forEach(([ph, vals], i) => {
+      const col = inkOf(ph), at = (j) => X(j).toFixed(1) + ' ' + Y(vals[j]).toFixed(1);
+      const line = pathOf(vals.length, at, (j) => ok(vals[j]), stride);
+      let le = vals.length - 1; while (le >= 0 && !ok(vals[le])) le--;
+      if (i === washed && vals.length > 1 && vals.every(ok)) s += '<path class="wash" fill="url(#wash-' + ch.uid + ')" d="' + line
+        + 'L' + X(vals.length - 1).toFixed(1) + ' ' + floor + 'L' + X(0).toFixed(1) + ' ' + floor + 'Z"/>';
+      s += '<path class="series" style="stroke:' + col + '" d="' + line + '"/>';
+      for (let j = 0; j < le; j++) if (ok(vals[j]) && !ok(vals[j - 1]) && !ok(vals[j + 1]))
+        s += '<circle class="lonedot" style="fill:' + col + '" r="3.5" cx="' + X(j).toFixed(1) + '" cy="' + Y(vals[j]).toFixed(1) + '"/>';
+      if (le >= 0) s += '<circle class="enddot" style="fill:' + col + '" r="4" cx="' + X(le).toFixed(1) + '" cy="' + Y(vals[le]).toFixed(1) + '"/>';
+    });
+    /* hover crosshair + one dot per series (positioned by paintReadout) */
+    s += '<line class="hovline" y1="' + (PT - 4) + '" y2="' + (H - PB) + '" visibility="hidden"/>'
+      + '<text class="hovtext" y="' + (PT - 9) + '" text-anchor="middle" visibility="hidden"></text>';
+    ch.span = [PL, W - PR];
+    series.forEach(([ph]) => { s += '<circle class="hovdot" style="fill:' + inkOf(ph) + '" r="4.5" visibility="hidden"/>'; });
+    return s + '</svg>';
   }
 
-  /* charts render at the exact pixel width of their container, so the
-     typography stays the same size on any screen; a ResizeObserver
-     re-renders them when the layout reflows */
+  /* the key is the readout: each series' value at the hovered epoch, or at the
+     latest one when nothing is hovered, and the crosshair names the epoch */
+  function paintReadout(metric) {
+    const ch = charts[metric], g = ch && ch.geom; if (!g) return;
+    const e = hover.e || g.maxLen, idx = e - 1, on = hover.e > 0 && e <= g.maxLen;
+    const line = ch.body.querySelector('.hovline'), dots = ch.body.querySelectorAll('.hovdot');
+    const name = ch.body.querySelector('.hovtext'), best = ch.body.querySelector('.besttext');
+    if (line) {
+      if (on) { const gx = g.X(idx);
+        line.setAttribute('x1', gx.toFixed(1)); line.setAttribute('x2', gx.toFixed(1));
+        name.textContent = 'Epoch ' + count(e);   /* kept inside the plot: its head is the hovered epoch's name */
+        name.setAttribute('x', clamp(gx, ch.span[0] + 40, ch.span[1] - 40).toFixed(1)); }
+      line.setAttribute('visibility', on ? 'visible' : 'hidden');
+      name.setAttribute('visibility', on ? 'visible' : 'hidden');
+      if (best) best.setAttribute('visibility', on ? 'hidden' : 'visible');   /* the two share the plot's head */
+    }
+    g.series.forEach(([, vals], i) => {
+      const v = vals[idx];
+      let k = idx; while (k > 0 && !isNum(vals[k])) k--;   /* a phase that skipped this epoch reads its latest value */
+      setTextOf(ch.valueEls[i], fmt(vals[k]));
+      const dot = dots[i]; if (!dot) return;
+      if (on && g.ok(v)) { dot.setAttribute('cx', g.X(idx).toFixed(1)); dot.setAttribute('cy', g.Y(v).toFixed(1)); dot.setAttribute('visibility', 'visible'); }
+      else dot.setAttribute('visibility', 'hidden');
+    });
+  }
+  function setTextOf(node, t) { if (node && node.textContent !== t) node.textContent = t; }
+
+  /* charts render at the exact pixel width of their container, so the type
+     stays the same size on any screen; a ResizeObserver re-renders on reflow */
   const ro = new ResizeObserver((entries) => {
     for (const en of entries) {
       const m = en.target._metric, ch = charts[m];
-      if (!ch) continue;
-      const w = Math.round(en.contentRect.width);
-      if (Math.abs(w - (ch.lastW || 0)) > 8) renderChart(m);
+      if (ch && Math.abs(Math.round(en.contentRect.width) - (ch.lastW || 0)) > 8) renderChart(m);
     }
   });
   function renderChart(metric) {
     const ch = charts[metric]; if (!ch) return;
-    const W = Math.max(320, Math.round(ch.body.clientWidth || 560));
-    /* uniform height across the grid — both columns share a width, so a
-       width-derived height keeps every chart identical. A taller ratio keeps
-       the curves readable rather than stretched flat. */
-    const H = clamp(Math.round(W * 0.64), 300, 410);
+    const series = seriesOf(ch.phases); if (!series.length) return;
+    /* a log scale needs every value positive; one that is not withdraws the option */
+    const positive = series.every(([, v]) => v.every((x) => !isNum(x) || x > 0));
+    if (!positive && ch.log) { ch.log = false; ch.logBtn.setAttribute('aria-pressed', 'false'); }
+    ch.logBtn.hidden = !positive;
+    const W = Math.max(260, Math.round(ch.body.clientWidth || 560));
+    const H = clamp(Math.round(W * 0.46), 210, 320);
     ch.lastW = W;
-    ch.body.innerHTML = chartSVG(metric, ch.phases, ch.log, bestEpochGlobal, W, H, ch);
-    const leg = ch.card.querySelector('.legend');
-    if (leg) { const C = themeColors();
-      const ser = Object.entries(ch.phases).filter(([, v]) => v && v.length);
-      const pal = phasePal(C, ser.map(([p]) => p));
-      leg.innerHTML = ser.map(([ph], i) => '<span><i style="background:' + pal[i] + '"></i>' + esc(titleCase(ph)) + '</span>').join(''); }
+    ch.body.innerHTML = chartSVG(metric, ch, W, H);
+    ch.legend.innerHTML = series.map(([ph]) => keyHTML(ph, ' <b></b>')).join('');
+    /* a long key takes its own row in every chart, rather than wrapping in some and not in others */
+    ch.legend.toggleAttribute('data-stack', series.length > 2);
+    ch.valueEls = Array.from(ch.legend.querySelectorAll('b'));
+    paintReadout(metric);
   }
-
-  function makeCard(metric) {
-    const card = document.createElement('div');
-    card.className = 'chart';
-    card.innerHTML = '<div class="chart-head"><span class="chart-name">' + esc(titleCase(metric)) + '</span>'
-      + '<span class="legend" aria-hidden="true"></span>'
-      + '<div class="chart-acts">'
-      + '<button class="cbtn lg" title="Toggle logarithmic scale">log</button>'
-      + '<button class="cbtn dl" title="Save as vector SVG">svg</button>'
-      + '</div></div><div class="chart-body"></div>';
-    return card;
-  }
-
-  function ensureChart(metric, mount) {
+  function ensureChart(metric) {
     if (charts[metric]) return charts[metric];
-    const card = makeCard(metric);
-    card.style.animationDelay = Math.min(Object.keys(charts).length, 8) * 0.05 + 's';  /* gentle stagger as charts appear */
-    mount.appendChild(card);
-    const ch = charts[metric] = { card, body: card.querySelector('.chart-body'), log: false, phases: {}, sig: '' };
-    card.querySelector('.dl').addEventListener('click', () => saveSVG(metric));
-    const lgBtn = card.querySelector('.lg');
-    lgBtn.addEventListener('click', () => {
-      const ok = Object.values(ch.phases).every((v) => v.every((x) => typeof x === 'number' && x > 0));
-      if (!ch.log && !ok) return;
-      ch.log = !ch.log; lgBtn.classList.toggle('on', ch.log); renderChart(metric);
+    const card = document.createElement('section');
+    card.className = 'panel chart';
+    card.innerHTML = '<div class="chart-head"><div class="chart-lead"><h2>' + esc(words(metric)) + '</h2>'
+      + '<span class="legend"></span></div><span class="chart-tools">'
+      + '<button class="toggle" type="button" aria-pressed="false" title="Plot the vertical axis on a logarithmic scale">Log</button>'
+      + '</span></div><div class="chart-body"></div>';
+    const ch = charts[metric] = { card, body: card.querySelector('.chart-body'), legend: card.querySelector('.legend'),
+      logBtn: card.querySelector('.toggle'), valueEls: [], log: false, phases: {}, sig: '', uid: Object.keys(charts).length };
+    ch.logBtn.addEventListener('click', () => {
+      ch.log = !ch.log; ch.logBtn.setAttribute('aria-pressed', ch.log ? 'true' : 'false'); renderChart(metric);
     });
-    attachHover(card, metric);
+    ch.body.addEventListener('pointermove', (ev) => {
+      const g = ch.geom, svg = ch.body.firstElementChild; if (!g || !svg) return;
+      const r = svg.getBoundingClientRect(), W = svg.viewBox.baseVal.width;
+      const xv = (ev.clientX - r.left) / r.width * W;
+      setHover(clamp(Math.round((xv - PL) / Math.max(W - PL - PR, 1) * (g.maxLen - 1)), 0, g.maxLen - 1) + 1);
+    });
+    ch.body.addEventListener('pointerleave', () => setHover(0));
     ch.body._metric = metric;
     ro.observe(ch.body);
     return ch;
   }
-
-  function updateCharts(metrics, primary) {
-    const grid = el('charts-grid');
-    const names = Object.keys(metrics || {}).filter((m) => Object.values(metrics[m] || {}).some((v) => v && v.length));
-    names.sort((a, b) => (a === primary ? -1 : 1) - (b === primary ? -1 : 1) || a.localeCompare(b));
-    /* every chart shows the same epoch-level history — the primary (loss) first.
-       Until the first epoch completes there are no points yet, so the panel
-       holds the "awaiting" placeholder rather than a one-off per-step view. */
-    for (const metric of names) {
-      const ch = ensureChart(metric, grid);
+  /* loss first, then the monitored metric, then the rest by name */
+  function metricOrder(d) {
+    const metrics = d.epoch_metrics || {}, rank = (m) => /loss/i.test(m) ? 0 : m === d.monitor ? 1 : 2;
+    return Object.keys(metrics).filter((m) => seriesOf(metrics[m]).length)
+      .sort((a, b) => rank(a) - rank(b) || a.localeCompare(b));
+  }
+  function updateCharts(d, names) {
+    const metrics = d.epoch_metrics || {}, grid = el('charts-grid');
+    show('charts-empty', !names.length && d.status === 'training');   /* a run that is over has no first epoch to wait for */
+    names.forEach((metric, i) => {
+      const ch = ensureChart(metric);
+      /* placed in the document where it is read, not reordered by style: a metric
+         that first reports late still takes its turn under the keyboard */
+      if (grid.children[i] !== ch.card) grid.insertBefore(ch.card, grid.children[i] || null);
       ch.phases = metrics[metric];
-      const sig = Object.entries(ch.phases).map(([p, v]) => p + ':' + (v ? v.length : 0)).join('|') + '|' + ch.log + '|' + bestEpochGlobal + '|' + themeEpoch;
+      const sig = Object.entries(ch.phases).map(([p, v]) => p + ':' + (v ? v.length : 0)).join('|') + '|' + bestEpoch;
       if (sig !== ch.sig) { ch.sig = sig; renderChart(metric); }
+    });
+  }
+
+  /* ── epoch table ───────────────────────────────────────────
+     The numbers the charts draw, newest epoch first — the view to read exact
+     values from, and to copy out. */
+  const TABLE_ROWS = 200;
+  let tableRows = {}, tableSig = '', tableCols = [];
+  function updateTable(d, names) {
+    const metrics = d.epoch_metrics || {};
+    const cols = [], groups = [];   /* one group of columns per metric, one column per phase */
+    names.forEach((m) => { const own = seriesOf(metrics[m]); groups.push({ m, span: own.length });
+      own.forEach(([ph, vals], i) => cols.push({ m, ph, vals, lead: i === 0 ? ' class="grp-start"' : '' })); });
+    tableCols = cols;
+    show('epochs', cols.length > 0);
+    const sig = cols.map((c) => c.m + '/' + c.ph + ':' + c.vals.length).join('|') + '|' + bestEpoch;
+    if (sig === tableSig) return;
+    tableSig = sig;
+    let h = '<thead><tr><th rowspan="2">Epoch</th>'
+      + groups.map((g) => '<th class="grp grp-start" title="' + esc(words(g.m)) + '"><span style="max-width:' + (g.span * 96) + 'px">' + esc(words(g.m)) + '</span></th>'
+        + new Array(g.span).join('<th class="grp"></th>')).join('') + '</tr><tr>'
+      + cols.map((c) => '<th' + c.lead + '>' + keyHTML(c.ph) + '</th>').join('') + '</tr></thead><tbody>';
+    /* a run of fifty thousand epochs must not become fifty thousand rows: the
+       table holds the newest, and the best one whatever its age */
+    const from = Math.max(dataLen - TABLE_ROWS + 1, 1);
+    const listed = []; for (let e = dataLen; e >= from; e--) listed.push(e);
+    if (bestEpoch >= 1 && bestEpoch < from) listed.push(bestEpoch);
+    setText('epochs-note', from > 1 ? 'The latest ' + TABLE_ROWS + ' of ' + count(dataLen) + ', and the best. Copy as CSV takes them all.' : '');
+    for (const e of listed) {
+      h += '<tr data-e="' + e + '"' + (e === bestEpoch ? ' data-best' : '') + '><td>' + count(e) + (e === bestEpoch ? '<span class="tag">best</span>' : '') + '</td>'
+        + cols.map((c) => '<td' + c.lead + '>' + (isNum(c.vals[e - 1]) ? fmt(c.vals[e - 1]) : '') + '</td>').join('') + '</tr>';
     }
+    const table = el('epoch-table');
+    table.innerHTML = h + '</tbody>';
+    tableRows = {};
+    table.querySelectorAll('tbody tr').forEach((row) => { tableRows[row.dataset.e] = row; });
+  }
+  (function () {
+    const table = el('epoch-table');
+    table.addEventListener('pointerover', (ev) => { const row = ev.target.closest('tbody tr'); if (row) setHover(+row.dataset.e); });
+    table.addEventListener('pointerleave', () => setHover(0));
+    el('csv-btn').addEventListener('click', () => {
+      const cell = (s) => /[",\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
+      const rows = ['epoch,' + tableCols.map((c) => cell(c.m + '_' + c.ph)).join(',')];
+      for (let e = 1; e <= dataLen; e++) rows.push(e + ',' + tableCols.map((c) => isNum(c.vals[e - 1]) ? c.vals[e - 1] : '').join(','));
+      copyText(rows.join('\n')).then(() => flash(el('csv-btn'), 'Copied')).catch(() => flash(el('csv-btn'), 'Copy failed'));
+    });
+  })();
+
+  /* ── sparse phases ─────────────────────────────────────────
+     A phase that runs every n-th epoch records one value each time it runs, so its series
+     arrives shorter than the others and — read by position — n times too early.
+     The schedule says when each value was taken; this puts it back at its epoch,
+     with gaps between, before anything draws it. Done once per payload. */
+  const spreadDone = new WeakSet();
+  function spread(d) {
+    if (spreadDone.has(d)) return;
+    spreadDone.add(d);
+    const every = {}, metrics = d.epoch_metrics || {};
+    (d.phases || []).forEach((p) => { if ((p.every || 1) > 1) every[p.name] = p.every; });
+    Object.keys(metrics).forEach((m) => Object.keys(metrics[m] || {}).forEach((ph) => {
+      const n = every[ph], vals = metrics[m][ph];
+      if (!n || !Array.isArray(vals)) return;
+      const out = new Array(vals.length * n).fill(null);
+      vals.forEach((v, k) => { out[(k + 1) * n - 1] = v; });
+      metrics[m][ph] = out;
+    }));
+  }
+
+  /* ── liveness ──────────────────────────────────────────────
+     A run is alive while its heartbeat keeps moving, and how long it has stood
+     still is timed on this page's clock alone. The stamp itself is the training
+     machine's time: read against the browser's, a run on a remote host whose
+     clock sits half a minute off would be called Offline while it trains — or
+     never, once it had died. */
+  const pulse = { stamp: null, at: 0 };
+  function silence(d) {
+    const now = performance.now();
+    if (d.last_update_ms !== pulse.stamp) { pulse.stamp = d.last_update_ms; pulse.at = now; }
+    return now - pulse.at;
   }
 
   /* ── main loop ─────────────────────────────────────────── */
@@ -879,104 +957,126 @@ document.addEventListener('DOMContentLoaded', function () {
   async function tick() {
     const d = window.__TRAIN4ALL_DATA__ || await fetchData();
     if (!d) return;
-    if (d.status === 'training' && Date.now() - (d.last_update_ms || 0) > STALE_MS) d.status = 'stopped';
+    if (silence(d) > STALE_MS && d.status === 'training') d.status = 'stopped';
 
     seedInks(d.phases);
-    const firstGrad = (d.phases || []).find((p) => p.training);
-    primaryPhase = firstGrad ? firstGrad.name : ((d.phases || [])[0] || {}).name || 'train';
+    spread(d);
+    /* Four ways for a run to be over, and the page tells them apart for as long
+       as anything can: completed; failed, with the error it raised; interrupted
+       from the keyboard; and — only when the process died without a word — stopped
+       answering. The last three halt the run where it stood. */
+    const grad = !!d.is_gradient_phase, done = d.status === 'completed', stopped = d.status === 'stopped';
+    const failed = d.status === 'failed', cut = d.status === 'interrupted', halted = stopped || failed || cut;
+    /* A phase is active once it has reported a step — its length may be unknown.
+       Between two phases, and while an epoch's artifacts are saved, no phase is
+       reporting; the run is no less alive, so the status holds what it last was
+       rather than falling back to "Starting" for half a second at every boundary. */
+    const active = !!(d.last_phase && d.current_step);
+    const mode = done || halted ? d.status : active ? (grad ? 'training' : 'evaluating') : view.live || 'idle';
+    if (isLive(mode)) view.live = mode;
+    const wasLive = isLive(view.mode) || view.mode === 'idle';
+    const changed = setMode(mode);
 
-    const grad = !!d.is_gradient_phase, ni = d.epochs_no_improve || 0, done = d.status === 'completed';
-    const active = !!(d.last_phase && d.max_step && d.current_step);
-    const mode = done ? 'completed' : d.status === 'stopped' ? 'stopped'
-      : !active ? 'idle' : grad ? (ni >= 1 ? 'stagnant' : 'training') : 'evaluating';
-    setMode(mode, ni);
-    setText('m-start', d.started_at || '—'); setText('m-elapsed', d.elapsed || '—');
-
-    /* progress fractions advance while a phase is active and SNAP to the phase's
-       true boundary when it finishes — the inter-phase flush update carries no step
-       info, and polling rarely catches the exact final step, so without the snap
-       both the inner ring and the % would stall just short of the boundary.
-         · inner ring (current-phase steps): snaps to a full circle.
-         · epoch fraction (overall % + bar): snaps to the finished phase's upper
-           bound — the next phase's start, or 1 for the epoch's last phase — so it
-           reliably reaches 100 % at the end whatever the schedule. */
-    const ef = epochFraction(d);
-    if (done) { prog.epFrac = 1; prog.stepFrac = 1; }
-    else if (active) {
-      prog.epFrac = ef;                                    // non-null whenever active
-      prog.stepFrac = clamp(d.current_step / d.max_step, 0, 1);
-      prog.lastGrad = grad; prog.lastPhase = d.last_phase; prog.lastMax = d.max_step; prog.ran = true;
-    } else if (prog.ran) {                                 // a phase just finished
-      prog.stepFrac = 1;
+    /* The epoch fraction advances while a phase is active and SNAPS to the
+       phase's true boundary when it finishes — the inter-phase flush carries no
+       step info, and polling rarely catches the exact final step, so without the
+       snap the epoch bar would stall just short of the boundary. */
+    const E = d.max_epoch || 0, epoch = d.current_epoch || 0;
+    if (epoch !== prog.epoch) { prog.epoch = epoch; prog.epFrac = 0; prog.held = false; }   // a new epoch starts empty
+    if (active) {
+      const at = epochFraction(d), own = phaseBounds(d, d.last_phase);
+      /* a phase of unknown length cannot be placed within its slice — it holds the slice's start */
+      prog.epFrac = at != null ? at : Math.max(prog.epFrac, own ? own[0] : 0);
+      prog.lastPhase = d.last_phase; prog.lastMax = d.max_step || 0; prog.lastStep = d.current_step; prog.held = true;
+    } else if (prog.held && !done) {                       // a phase of this epoch just finished
       const b = phaseBounds(d, prog.lastPhase);
       prog.epFrac = b ? b[1] : 1;
     }
-    const E = d.max_epoch || 0, completed = Math.max(d.current_epoch || 0, 1) - 1;
-    const overall = done ? 1 : (E ? clamp((completed + prog.epFrac) / E, 0, 1) : 0);
+    const doneEpochs = done ? epoch : Math.max(epoch, 1) - 1;
+    const frac = done ? 0 : prog.epFrac;
+    const overall = E ? clamp((doneEpochs + frac) / E, 0, 1) : 0;
+    const pct = Math.round(overall * 100);
+    view.overall = overall;
 
-    /* phase colour drives the inner step ring. While running it tracks the live
-       phase (train blue / val purple); once a phase's steps finish it turns gold
-       and holds full through the gap before the next phase — a small note of
-       completion — and at standby (before any epoch) it is a neutral grey. On run
-       completion the inner ring is blanked entirely; the gold crown moves to the
-       outer run ring instead. */
-    if (active) prog.phaseCol = grad ? 'var(--st-training)' : 'var(--st-evaluating)';
-    else if (prog.ran) prog.phaseCol = 'var(--st-completed)';   /* steps done, between phases → gold */
-    else prog.phaseCol = 'var(--st-idle)';
-    document.documentElement.style.setProperty('--phasecol', prog.phaseCol);
-
-    el('run-line').style.width = (overall * 100).toFixed(2) + '%';
-    el('run-line').classList.toggle('done', done);   /* the overall-run hairline goes gold to match the gauge */
-    el('ring-run').classList.toggle('done', done);   /* crown the overall-run ring gold at completion */
-    setRing('ring-run', RING_RUN_C, overall);
-    setRing('ring-step', RING_STEP_C, done ? 0 : prog.stepFrac);   /* inner ring is the live phase only — blank when done */
-    tween(el('ov-pct'), Math.round(overall * 100), (v) => String(Math.round(v)));
-    setText('ov-label', done ? 'Complete' : 'Overall');
-    updateGauge(d);
-
-    /* phase / epoch / step readout — the finished phase is held through the
-       inter-phase gap (shown at max/max) so it never blanks while the rings
-       already read complete */
-    const showPhase = !done && (active || prog.ran);
+    /* headline — where the run is (left), how long is left (right) */
     const phName = active ? d.last_phase : prog.lastPhase;
-    const phb = el('hm-phase');
-    if (showPhase && phName) {
-      phb.style.display = ''; phb.textContent = titleCase(phName);
-      phb.className = 'hm-phase ' + (prog.lastGrad ? 'is-train' : 'is-eval');
-    } else phb.style.display = 'none';
-    setText('hm-epoch', 'Epoch ' + (d.current_epoch || 0) + ' / ' + (E || '—'));
-    const stepMax = active ? d.max_step : (prog.ran ? prog.lastMax : 0);
-    const stepCur = active ? (d.current_step || 0) : stepMax;   // gap → completed (max / max)
-    setText('hm-step', done ? 'Complete' : (stepMax ? 'Step ' + stepCur + ' / ' + stepMax : 'Step — / —'));
-
+    const stepMax = active ? d.max_step || 0 : prog.lastMax;
+    const stepCur = active ? d.current_step : stepMax || prog.lastStep;   // between phases → the finished phase, at its end
+    /* speed and time left are held through the gaps between phases, so neither
+       blinks at every phase boundary */
     updateSpeed(d, grad);
-    const eta = etaSeconds(d), primary = pickPrimary(d);
-    const stepping = active && d.status === 'training';   /* a step is actively in progress */
-    updateKpis(d, primary, stepping);
-    setText('k-speed', stepping && spd.ema ? (spd.ema < 10 ? spd.ema.toFixed(1) : String(Math.round(spd.ema))) : '—');
-    setText('k-eta', stepping && spd.ema && isFinite(eta) ? fmtDur(eta) : '—');
-    setText('k-eta-sub', done ? 'complete'
-      : (stepping && spd.ema && isFinite(eta) ? 'ends ~' + fmtClock(new Date(Date.now() + eta * 1000)) : 'remaining'));
+    const running = d.status === 'training';
+    const eta = etaSeconds(d), hasEta = running && spd.ema > 0 && isFinite(eta);
+    let title = 'Starting', sub = 'Waiting for the first step.', right = '', rightSub = '';
+    if (done) {
+      /* A finished run has nothing left to announce: what it achieved is the
+         Best panel's to say, and when it ran is the Run panel's. The headline
+         steps back to one plain line — and, if the run stopped early, why. */
+      const ni = d.epochs_no_improve || 0, patience = (d.config || {}).patience, early = epoch < E;
+      title = early ? 'Stopped early at epoch ' + count(epoch) + ' of ' + count(E) : 'Finished ' + count(E) + (E === 1 ? ' epoch' : ' epochs');
+      sub = early && isNum(patience) && patience > 0 && ni >= patience ? 'No improvement for ' + plural(ni, 'epoch') + ' (patience ' + patience + ').' : '';
+    } else if (epoch > 0 && E) {
+      const where = stepCur ? 'Step ' + count(stepCur) + (stepMax ? ' of ' + count(stepMax) : '') + ' in ' + phName : '';
+      title = (failed ? 'Failed at epoch ' : cut ? 'Interrupted at epoch ' : stopped ? 'Stopped responding at epoch ' : 'Epoch ')
+        + count(epoch) + ' of ' + count(E);
+      sub = failed ? (d.error || 'The run raised an error').replace(/[.\s]*$/, '.') + (where ? ' ' + where + '.' : '')
+        : cut ? 'Stopped from the keyboard.' + (where ? ' ' + where + '.' : '')
+        : stopped ? 'Last update ' + (d.updated_at || '—') + '. The training process has probably exited.'
+        : where || 'Waiting for the first step.';
+      if (!halted) {
+        right = hasEta ? fmtDur(eta) + ' left' : pct + '% done';
+        const end = new Date(Date.now() + eta * 1000);   /* a clock time names the finish only while it is today's or tomorrow's */
+        rightSub = !hasEta ? '' : pct + '% done, finishing ' + (eta < 86400 ? 'around ' + fmtClock(end)
+          : end.toLocaleDateString('en-US', end.getFullYear() === new Date().getFullYear()
+            ? { month: 'short', day: 'numeric' } : { month: 'short', day: 'numeric', year: 'numeric' }));
+      }
+    } else if (halted) {
+      title = failed ? 'Failed before the first epoch' : cut ? 'Interrupted before the first epoch' : 'Stopped responding';
+      sub = failed ? d.error || 'The run raised an error.' : cut ? 'Stopped from the keyboard.'
+        : 'Last update ' + (d.updated_at || '—') + '. The training process has probably exited.';
+    }
+    setAccent(mode, phName);
+    el('run-head').toggleAttribute('data-quiet', done);
+    setText('run-title', title); setText('run-sub', sub);
+    setText('run-eta', right); setText('run-eta-sub', rightSub);
 
-    updateTelemetry(d);
-    renderSpark(d);
+    bestEpoch = d.best_epoch || 0; monPhase = d.monitor_phase || '';
+    const names = metricOrder(d);
+    dataLen = names.reduce((n, m) => Math.max(n, Math.max.apply(null, seriesOf(d.epoch_metrics[m]).map(([, v]) => v.length))), 0);
 
-    bestEpochGlobal = d.best_epoch || 0;
-    updateCharts(d.epoch_metrics || {}, primary);
+    document.documentElement.style.setProperty('--mon', inkOf(d.monitor_phase || 'val'));
+    paintRun(overall, done || halted);
+    paintEpoch(d, !done && epoch > 0);
+    el('run-bar').setAttribute('aria-valuenow', String(pct));
 
-    const liveV = primary !== null ? liveValue(d, primary) : undefined;
-    document.title = Math.round(overall * 100) + '%' + (typeof liveV === 'number' ? ' · ' + titleCase(primary) + ' ' + fmt(liveV) : '') + ' — train4all';
+    updateBest(d);
+    renderLive(d);
+    renderStepFacts(d);
+    updateFacts(d, running, done, halted, done ? 'Finished' : failed ? 'Failed' : cut ? 'Interrupted' : 'Last update');
+    updateCharts(d, names);
+    updateTable(d, names);
 
-    if (!staticDone && ((d.config && Object.keys(d.config).length) || (d.env_summary && Object.keys(d.env_summary).length))) {
+    show('notify-btn', canAlert && !done && !halted);
+    if (canAlert) paintNotify();   /* permission can change behind the page's back */
+    if (changed && wasLive && (done || halted)) raiseNotification(
+      done ? 'Training finished' : failed ? 'Training failed' : cut ? 'Training interrupted' : 'Training stopped responding',
+      (failed && d.error ? d.error.replace(/[.\s]*$/, '. ') : '') + (d.best_metric != null ? 'Best ' + (d.monitor_phase || 'val') + ' ' + String(d.monitor || 'loss').replace(/_/g, ' ') + ' ' + fmt(d.best_metric) + ' at epoch ' + d.best_epoch + '. ' : '')
+        + 'Epoch ' + epoch + ' of ' + E + ' after ' + (d.elapsed || '—') + '.');
+
+    drawFavicon(false);
+    document.title = (done ? 'Done' : failed ? 'Failed' : cut ? 'Interrupted' : stopped ? 'Offline' : pct + '%') + ' - train4all';
+
+    if (!staticDone && [d.config, d.env_summary, d.model_summary].some((part) => part && Object.keys(part).length)) {
       renderKV('cfg-grid', d.config); renderKV('env-grid', d.env_summary); renderKV('model-grid', d.model_summary);
       staticDone = true;
     }
-    setText('footer', 'train4all' + (VERSION && VERSION !== 'unknown' ? ' v' + VERSION : '') + ' · ' + (d.updated_at || ''));
   }
 
-  setFavicon(accentColor());
-  setInterval(tick, POLL_MS);
-  tick();
+  drawFavicon(true);
+  let busy = false;   /* one tick at a time: a slow fetch must not land after a newer one and redraw older data */
+  function pump() { if (busy) return; busy = true; tick().finally(() => { busy = false; }); }
+  if (!EMBEDDED) setInterval(pump, POLL_MS);
+  pump();
 });
 </script>
 </body>
