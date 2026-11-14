@@ -6,13 +6,14 @@ shows `checkpoint["ema"] = ...` doing it. None of that had a test.
 """
 
 import contextlib
+import json
 from typing import Any
 
 import pytest
 import torch
 from conftest import TinyTrainer, make_loader
 
-from train4all import Checkpoint, Phase
+from train4all import Checkpoint, DashboardConfig, Phase
 
 
 def test_the_checkpoint_behaves_like_a_dict():
@@ -173,6 +174,49 @@ def test_no_checkpoint_is_written_when_the_loop_aborts(run_dir):
     assert not trainer.get_latest_checkpoint_path().exists(), (
         "a mid-epoch save would persist an incomplete state"
     )
+
+
+def test_a_run_that_fails_leaves_a_dashboard_that_says_so(run_dir):
+    """The trainer is the one who knows the run died and of what — it must tell the
+    dashboard, or the page can only go quiet and be called *Offline* much later."""
+    quiet = DashboardConfig(open_on_start=False, use_server=False, poll_interval_ms=20)
+
+    class FailingFast(Failing):
+        _DASH_EXTRA_WAIT_S = 0.0
+
+    trainer = FailingFast(num_epochs=3, run_dir=run_dir, use_progress_bar=False,
+                          use_dashboard=True, dashboard_config=quiet)
+    with pytest.raises(RuntimeError, match="boom"):
+        trainer.train(Phase("train", make_loader(4), training=True))
+
+    d = json.loads((run_dir / quiet.data_filename).read_text(encoding="utf-8"))
+    assert (d["status"], d["error"]) == ("failed", "RuntimeError: boom")
+    assert (d["current_epoch"], d["max_epoch"]) == (1, 3)
+
+
+def test_a_run_that_fails_between_two_dashboard_writes_is_shown_at_its_last_step(run_dir):
+    """Step writes are throttled, so the page is usually a few steps behind the run. A
+    failure must close that gap: the page then says where the run stopped, for good."""
+    quiet = DashboardConfig(open_on_start=False, use_server=False, poll_interval_ms=20)
+
+    class FailsOnTheFourthStep(TinyTrainer):
+        _DASH_EXTRA_WAIT_S = 0.0
+        _DASH_THROTTLE_S = 3600.0        # one write, then every later step is skipped
+
+        def compute_loss(self, batch: Any) -> torch.Tensor:
+            self.calls = getattr(self, "calls", 0) + 1
+            if self.calls == 4:
+                raise RuntimeError("boom")
+            return super().compute_loss(batch)
+
+    trainer = FailsOnTheFourthStep(num_epochs=1, run_dir=run_dir, use_progress_bar=False,
+                                   use_dashboard=True, dashboard_config=quiet)
+    with pytest.raises(RuntimeError, match="boom"):
+        trainer.train(Phase("train", make_loader(24), training=True))
+
+    d = json.loads((run_dir / quiet.data_filename).read_text(encoding="utf-8"))
+    assert (d["current_step"], d["max_step"], d["last_phase"]) == (3, 6, "train"), \
+        "the last step that finished, not the last one the throttle let through"
 
 
 # ── The running phase ─────────────────────────────────────────────────────────

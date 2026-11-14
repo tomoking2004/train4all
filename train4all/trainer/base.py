@@ -19,8 +19,10 @@ import inspect
 import json
 import math
 import random
+import socket
 import subprocess
 import time
+import traceback
 from collections.abc import Callable, Generator, Iterator
 from contextlib import contextmanager
 from datetime import datetime
@@ -41,6 +43,7 @@ from train4all.dashboard import Dashboard, DashboardConfig, PhaseSpec
 from train4all.trainer.checkpoint import Checkpoint
 from train4all.trainer.metrics import MetricStore
 from train4all.trainer.models import ModelLedger, ModuleSpec
+from train4all.trainer.notice import Notice
 from train4all.trainer.phase import Phase, schedule_summary
 from train4all.trainer.report import Report
 from train4all.utils import (
@@ -167,6 +170,23 @@ class BaseTrainer(abc.ABC):
         use_dashboard: Enable the live web dashboard.
         dashboard_config: Dashboard appearance and behaviour settings.
             A default :class:`DashboardConfig` is used when ``None``.
+        notify: Called once, with a :class:`Notice`, when a run that
+            :meth:`train` started is over — however it ended: finished, stopped
+            early, failed, or interrupted. (A call that finds the run already
+            complete starts nothing, and announces nothing.) The trainer knows
+            *when* a run is over and *what* happened; where that should go is
+            yours to say, so this is a function rather than an address::
+
+                notify=lambda n: requests.post("https://ntfy.sh/my-topic", data=n.body,
+                                               headers={"Title": n.title}, timeout=10)
+
+            The notice is a ``title`` and a ``body`` — a subject and a mail, a
+            push title and its message — and ``str(notice)`` is both. Anything
+            that takes them will do: a push service, a chat webhook, ``smtplib``,
+            ``print``. It runs in the training process, so it reaches you with the
+            browser closed and the dashboard off. An exception it raises is
+            reported as a warning and goes no further: a notification that fails
+            must not take the run, or the run's own error, with it.
     """
 
     # Class-level constants — override in a subclass to customize.
@@ -239,6 +259,7 @@ class BaseTrainer(abc.ABC):
         logger: TrainerLogger | None = None,
         use_dashboard: bool = False,
         dashboard_config: DashboardConfig | None = None,
+        notify: Callable[[Notice], None] | None = None,
     ) -> None:
         # ── Training / optimization ───────────────────────────────────────────
         self.num_epochs = num_epochs
@@ -287,6 +308,9 @@ class BaseTrainer(abc.ABC):
         self.use_progress_bar = use_progress_bar
         self.debug_mode = debug_mode
         self.logger = logger or self._create_default_logger()
+        if notify is not None and not callable(notify):
+            raise TypeError(f"notify must be a function taking the Notice; got {notify!r}")
+        self.notify = notify
         # Handed ``self.print`` rather than the logger: the forward reads
         # ``self.logger`` when called, so a logger replaced later still takes effect.
         self._report = Report(self.print, key_width=self._KEY_WIDTH)
@@ -323,6 +347,7 @@ class BaseTrainer(abc.ABC):
         self._ckpt_extras: dict[str, Any] = {}
         self._env_extras: dict[str, Any] = {}
         self._last_dash_write: float = 0.0
+        self._dash_skipped: dict[str, Any] | None = None
 
         # ── Internal: GPU-memory probe ────────────────────────────────────────
         # The probe owns its own NVML handle and smi cache, so the progress bar
@@ -678,7 +703,7 @@ class BaseTrainer(abc.ABC):
             ValueError: If ``num_epochs`` was not set, if no phase was given, or
                 if two phases share a name.
         """
-        self._require_num_epochs()
+        num_epochs = self._require_num_epochs()
         self._validate_phases(phases)
         self.prepare_training()
 
@@ -697,12 +722,13 @@ class BaseTrainer(abc.ABC):
         self.print(f"\n🚀 Training started at {start_time.strftime(TIMESTAMP_FORMAT)}\n")
         if self._dashboard:
             self._dashboard.mark_started(start_time)
-        self.on_training_start()
+        with self._announcing_failure(start_time, num_epochs):
+            self.on_training_start()
 
-        # ``BaseException`` so a KeyboardInterrupt (Ctrl-C) or out-of-memory
-        # error also reaches ``on_exception`` before propagating. No checkpoint
-        # is written here: a mid-epoch save would persist an incomplete state,
-        # so recovery is left to the hook (which is a no-op by default).
+        # ``BaseException`` so a KeyboardInterrupt (Ctrl-C) also reaches
+        # ``on_exception`` before propagating. No checkpoint is written here: a
+        # mid-epoch save would persist an incomplete state, so recovery is left
+        # to the hook (which is a no-op by default).
         try:
             for epoch, max_epoch in self.epoch_iterator():
                 self.print(f"\n── Epoch {epoch} / {max_epoch}\n")
@@ -736,14 +762,28 @@ class BaseTrainer(abc.ABC):
 
                 self.print()
         except BaseException as exc:
-            self.on_exception(exc)
+            # ``finally``: a hook that itself raises must not cost the run its
+            # last word — the page and the notice still say what ended it.
+            try:
+                self.on_exception(exc)
+            finally:
+                self._dash_finalize(exc)
+                self._notify(start_time, num_epochs, error=exc)
             raise
 
-        self.on_training_end()
+        with self._announcing_failure(start_time, num_epochs):
+            self.on_training_end()
         duration = datetime.now() - start_time
-        self._dash_finalize()
-        self.empty_cuda_cache()
-        self.print(f"\n✅ Training completed. Duration: {str(duration).split('.')[0]}\n")
+        # The run is over, and it finished: what is left is housekeeping.
+        # ``finally``: if closing the page or releasing the cache raises — a Ctrl-C
+        # in the page's last wait is enough — the notice still goes out, and still
+        # says the run finished.
+        try:
+            self._dash_finalize()
+            self.empty_cuda_cache()
+            self.print(f"\n✅ Training completed. Duration: {str(duration).split('.')[0]}\n")
+        finally:
+            self._notify(start_time, num_epochs)
 
     @_require_setup
     def test(
@@ -952,7 +992,7 @@ class BaseTrainer(abc.ABC):
         self.clear_metrics()
         self.clear_cache()
         # The RNGs and the scaler's fp16 loss scale would otherwise carry over;
-        # the transient _cycle_weight / _last_dash_write counters reset on use.
+        # the transient _cycle_weight / _last_dash_write / _dash_skipped reset on use.
         self.reset_seed()
         self.reset_scaler()
 
@@ -1962,8 +2002,8 @@ class BaseTrainer(abc.ABC):
             if phase.training and weight is None:
                 weight = self.get_batch_weight(batch)
             metrics = self._compute_step(batch, phase, weight=weight, apply_update=apply_update)
-            # Throttle intermediate steps, but always write the final step of a
-            # phase so the gauge's inner ring reaches 100% before the phase resets.
+            # Throttle intermediate steps, but always write the final step of a phase,
+            # so the dashboard's epoch bar reaches the phase's end before the phase resets.
             self._dash_update(
                 step=step or 0, max_step=max_step, step_metrics=metrics, phase=phase,
                 throttle=max_step <= 0 or step != max_step,
@@ -2464,6 +2504,128 @@ class BaseTrainer(abc.ABC):
 
     # ── Internal: Display ─────────────────────────────────────────────────────
 
+    @contextmanager
+    def _announcing_failure(self, started: datetime, num_epochs: int) -> Iterator[None]:
+        """Run a start-of-run or end-of-run hook as part of the run it belongs to.
+
+        ``on_training_start`` and ``on_training_end`` sit outside the loop, and so
+        outside the handler that guards it — but the run has begun by the first
+        and is not over until the second returns. If either raises, the run ended
+        in a failure: the dashboard and the caller's ``notify`` are told so before
+        the error goes on its way, rather than the page going quiet and nothing
+        being sent. ``on_exception`` is not called: it is documented for the loop.
+        """
+        try:
+            yield
+        except BaseException as exc:
+            self._dash_finalize(exc)
+            self._notify(started, num_epochs, error=exc)
+            raise
+
+    def _notify(self, started: datetime, num_epochs: int, error: BaseException | None = None) -> None:
+        """Hand the caller's ``notify`` a :class:`Notice` of how the run ended.
+
+        Delivery is the caller's function and so is its failure: an exception it
+        raises is downgraded to a warning here, because this is called on the way
+        out of a failing run as well as a finished one, and a notifier's exception
+        must never replace the run's own. A Ctrl-C while it runs is not the
+        notifier's but the user's, and is let through: on the way out of a
+        failing run it carries that run's error as its context, so the traceback
+        still shows both.
+        """
+        if self.notify is None:
+            return
+        try:
+            notice = self._notice(started, num_epochs, error)
+            self.notify(notice)
+        except Exception as exc:
+            self._warn(f"notify failed — {type(exc).__name__}: {exc}")
+        else:
+            # The console names the run's ending, not the mail's envelope: the
+            # bracketed tag is for an inbox, where this message sits among others.
+            self.print(f"📨 Notification sent — {notice.title.removeprefix('[train4all] ')}\n")
+
+    def _notice(self, started: datetime, num_epochs: int, error: BaseException | None) -> Notice:
+        """Write the run's ending for someone who was not there.
+
+        The title has to work alone, in a list of mail subjects: which run, how it
+        ended, and the best value or the error it ended on. The body answers, in
+        the order they would be asked, the questions that would otherwise mean a
+        walk to the machine: what happened; what the result is; when and where it
+        ran; and where the files are — the checkpoint to use, or the log to read
+        and the checkpoint to resume from.
+        """
+        now = datetime.now()
+        took = str(now - started).split(".")[0]
+        run, done = self.run_dir.name, self._current_epoch
+        best = (
+            f"best {self.monitor_phase} {self.monitor} {self._best_metric:.4f} at epoch {self._best_epoch}"
+            if self._best_epoch is not None else ""
+        )
+        at = f"at epoch {done} of {num_epochs}" if done else "before the first epoch"
+
+        if error is not None and not isinstance(error, KeyboardInterrupt):
+            kind = type(error).__name__
+            title = f"{run} failed {at}: {kind}"
+            lead = [f"Failed {at} after {took}.", "", f"{kind}: {error}".removesuffix(": ")]
+            # Name the place in the caller's own code: the innermost frame of an
+            # out-of-memory error is somewhere inside torch, which tells them nothing.
+            frames = traceback.extract_tb(error.__traceback__)
+            own = [f for f in frames if not {"site-packages", "dist-packages"} & set(Path(f.filename).parts)]
+            if frames:
+                last = (own or frames)[-1]
+                lead.append(f"Raised in {last.name} ({Path(last.filename).name}, line {last.lineno}).")
+        elif error is not None:
+            title = f"{run} interrupted {at}"
+            lead = [f"Interrupted {at} after {took}."]
+        elif done < num_epochs:
+            stalled = self._epochs_no_improve
+            title = f"{run} stopped early {at}" + (f": {best}" if best else "")
+            lead = [f"Stopped early {at} after {took}: no improvement for "
+                    f"{stalled} epoch{'' if stalled == 1 else 's'} (patience {self.patience})."]
+        else:
+            title = f"{run} finished" + (f": {best}" if best else "")
+            lead = [f"Finished {done} epoch{'' if done == 1 else 's'} in {took}."]
+
+        # The result: the best value, then each phase's latest figures. "Latest"
+        # rather than "epoch N": a phase that runs every few epochs was last
+        # measured earlier than the others, and a run cut short mid-epoch has some
+        # phases one epoch ahead of the rest.
+        table = self._metrics.epoch
+        result = [f"{best[0].upper()}{best[1:]}."] if best else []
+        figures = []
+        for phase in dict.fromkeys(p for phases in table.values() for p in phases):
+            values = [
+                f"{metric} {phases[phase][-1]:.4f}" for metric, phases in table.items()
+                if phases.get(phase) and phases[phase][-1] is not None
+            ]
+            if values:
+                figures.append(f"  {phase}: {', '.join(values)}")
+        if figures:
+            result += ["Latest results:", *figures]
+        elif error is not None:
+            result.append("No epoch finished.")
+
+        when = [
+            f"Started {started.strftime(TIMESTAMP_FORMAT)}, ended {now.strftime(TIMESTAMP_FORMAT)}.",
+            f"On {socket.gethostname()}, {self.device}.",
+        ]
+
+        files = [f"Run directory: {self.run_dir.resolve()}"]
+        if error is None and self.get_best_checkpoint_path().exists():
+            files.append(f"Best checkpoint: {self.get_best_checkpoint_path().resolve()}")
+        latest = self.get_latest_checkpoint_path()
+        if error is not None and latest.exists():
+            files.append(f"Latest checkpoint: {latest.resolve()} (run again to resume from it)")
+        log = self.run_dir / self._LOG_FILENAME
+        if error is not None and log.exists():
+            files.append(f"Log: {log.resolve()}")
+        if self._dashboard is not None:
+            files.append(f"Dashboard: {self._dashboard.path}")
+
+        body = "\n\n".join("\n".join(part) for part in (lead, result, when, files) if part)
+        return Notice(title=f"[train4all] {title}", body=body)
+
     def _warn(self, msg: str) -> None:
         """A :data:`~train4all.utils.Printer` that warns — what a collaborator is handed
         when it has something to report but no say in how loudly."""
@@ -2524,8 +2686,14 @@ class BaseTrainer(abc.ABC):
             return
         now = time.time()
         if throttle and now - self._last_dash_write < self._DASH_THROTTLE_S:
+            # Skipped, not forgotten: a run that dies before the next write is shown
+            # at this step, rather than wherever the last write happened to fall.
+            self._dash_skipped = {
+                "step": step, "max_step": max_step, "step_metrics": step_metrics, "phase": phase,
+            }
             return
         self._last_dash_write = now
+        self._dash_skipped = None
         # Collect the per-group learning rates so a dict / multi-group LR is
         # represented faithfully: a single value when they all agree, otherwise
         # the full list (the dashboard renders it as a range).
@@ -2551,21 +2719,37 @@ class BaseTrainer(abc.ABC):
         )
 
     def _dash_gpu_mem(self) -> tuple[float, float] | None:
-        """``(used_gb, total_gb)`` for the dashboard's footprint bar, or ``None``
+        """``(used_gb, total_gb)`` for the dashboard's memory meter, or ``None``
         when not on CUDA. The same probe the progress bar reads."""
         return self._gpu.memory_gb() if self.device.type == "cuda" else None
 
-    def _dash_finalize(self) -> None:
+    def _dash_finalize(self, error: BaseException | None = None) -> None:
+        """Close the dashboard on how the run ended — *error* is what ended it, if
+        anything did, so that a failed run's page says "failed" and why rather than
+        going quiet and being declared *Offline* half a minute later.
+
+        On that path this runs while an exception is already on its way out, so a
+        dashboard that cannot be written is a warning and nothing more.
+        """
         if self._dashboard is None:
             return
-        self._dashboard.finalize(
-            self._current_epoch,
-            self._require_num_epochs(),
-            self._metrics.epoch,
-            self._best_metric,
-            self._best_epoch,
-            epochs_no_improve=self._epochs_no_improve,
-        )
+        try:
+            if error is not None and self._dash_skipped is not None:
+                self._dash_update(**self._dash_skipped)
+            self._dashboard.finalize(
+                self._current_epoch,
+                self._require_num_epochs(),
+                self._metrics.epoch,
+                self._best_metric,
+                self._best_epoch,
+                epochs_no_improve=self._epochs_no_improve,
+                error=error,
+            )
+        except Exception as exc:
+            if error is None:
+                raise
+            self._warn(f"dashboard could not record the failure — {type(exc).__name__}: {exc}")
+            return
         time.sleep(self._dashboard.poll_s + self._DASH_EXTRA_WAIT_S)
 
     # ── Internal: Data Utilities ──────────────────────────────────────────────

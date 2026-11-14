@@ -69,6 +69,7 @@ train4all is a minimal PyTorch training framework. Subclass `BaseTrainer`, imple
     - [GPU Utilities](#gpu-utilities)
   - [Live Dashboard](#live-dashboard)
     - [DashboardConfig Parameters](#dashboardconfig-parameters)
+  - [Notifications](#notifications)
   - [Utilities](#utilities)
   - [Development](#development)
   - [License](#license)
@@ -198,6 +199,7 @@ Every parameter is optional, and all except `num_epochs` are **keyword-only**, s
 | `logger` | `None` | Any object satisfying the `TrainerLogger` protocol (a `log()` method); a default `UnifiedLogger` is created if `None`. |
 | `use_dashboard` | `False` | Enable the live web dashboard. |
 | `dashboard_config` | `None` | Dashboard appearance and behaviour (`DashboardConfig`). |
+| `notify` | `None` | A function called once, with a `Notice` (a `title` and a `body`), when a run that `train()` started ends — finished, stopped early, failed, or interrupted. See [Notifications](#notifications). |
 
 ### Class Constants
 
@@ -854,6 +856,90 @@ Whether there is a dashboard at all is `use_dashboard`, not a setting here.
 | `use_server` | `True` | Start a local HTTP server (required for Chrome/Edge on `file://` pages). |
 
 The trainer drives the dashboard for you, but the engine is exported for anyone feeding it from their own loop — `train4all.dashboard`, a subsystem beside `train4all.trainer` rather than a helper under it, holding the page it writes (`style.css`, `shell.html`) as its own package data. `Dashboard` writes the HTML shell once on `initialize()`, overwrites a small JSON file on every `update()`, and inlines that data on `finalize()` so the page survives the process. `finalize(..., error=exc)` records a run that failed or was interrupted, with its reason, instead of a completed one. `mark_started()` sets the elapsed-time origin, `heartbeat()` keeps a long synchronous pause from reading as *Offline*, `open_browser()` raises the page on demand, and `url` / `path` / `active` / `elapsed` / `poll_s` report where and how it is running. `PhaseSpec` is the flat projection of a [`Phase`](#phases) it renders a schedule from (`name`, `training`, `steps`, `every`).
+
+---
+
+## Notifications
+
+A run takes hours, and you are rarely at the machine when it ends. Pass `notify` a function and the trainer calls it once when a run that `train()` started is over — however it ended: finished, stopped early, failed, or interrupted.
+
+The function receives a `Notice`: a `title` that is enough on its own, and a `body` that answers what you would otherwise have to walk to the machine to find out. The title names the run by its directory — `run`, in the two below.
+
+```
+[train4all] run finished: best val accuracy 0.9092 at epoch 34
+
+Finished 40 epochs in 1:27:03.
+
+Best val accuracy 0.9092 at epoch 34.
+Latest results:
+  train: loss 0.1930, accuracy 0.9820
+  val: loss 0.5307, accuracy 0.8929
+
+Started 2026-11-14 13:11:35, ended 2026-11-14 14:38:38.
+On lab-pc-3, cuda:0.
+
+Run directory: /home/me/experiments/run
+Best checkpoint: /home/me/experiments/run/checkpoints/best.pth
+Dashboard: /home/me/experiments/run/dashboard.html
+```
+
+A run that fails says so, and why, and where to pick it up:
+
+```
+[train4all] run failed at epoch 12 of 40: OutOfMemoryError
+
+Failed at epoch 12 of 40 after 0:20:11.
+
+OutOfMemoryError: CUDA out of memory.
+Raised in compute_loss (my_trainer.py, line 48).
+
+Best val accuracy 0.8320 at epoch 11.
+Latest results:
+  train: loss 0.4381, accuracy 0.9100
+  val: loss 0.6685, accuracy 0.8320
+
+Started 2026-11-14 13:11:35, ended 2026-11-14 13:31:46.
+On lab-pc-3, cuda:0.
+
+Run directory: /home/me/experiments/run
+Latest checkpoint: /home/me/experiments/run/checkpoints/latest.pth (run again to resume from it)
+Log: /home/me/experiments/run/log.txt
+Dashboard: /home/me/experiments/run/dashboard.html
+```
+
+The trainer knows *when* a run ends and *what* happened; *where* that should go is yours to say — which is why `notify` is a function rather than an address. A subject and a mail:
+
+```python
+import os
+import smtplib
+from email.message import EmailMessage
+
+from train4all import Notice
+
+def email(notice: Notice) -> None:
+    message = EmailMessage()
+    message["Subject"], message["From"], message["To"] = notice.title, "me@example.com", "me@example.com"
+    message.set_content(notice.body)
+    with smtplib.SMTP("smtp.example.com", 587, timeout=30) as smtp:
+        smtp.starttls()
+        smtp.login("me@example.com", os.environ["SMTP_PASSWORD"])
+        smtp.send_message(message)
+
+trainer = MyTrainer(num_epochs=40, notify=email)
+```
+
+A push to your phone through [ntfy](https://ntfy.sh) (install the app, subscribe to a topic name of your own; no account), or a post to a channel — `str(notice)` is the title and the body together:
+
+```python
+import requests
+
+notify=lambda n: requests.post("https://ntfy.sh/my-topic", data=n.body, headers={"Title": n.title}, timeout=10)
+notify=lambda n: requests.post(SLACK_WEBHOOK_URL, json={"text": str(n)}, timeout=10)
+notify=lambda n: requests.post(DISCORD_WEBHOOK_URL, json={"content": str(n)}, timeout=10)
+notify=print
+```
+
+`notify` runs in the training process, so the notice reaches you with the browser closed and the dashboard off. Once the function returns, the console records the notice in a line of its own. If the function raises, the trainer logs a warning and carries on: a notification that fails never takes the run, or the run's own error, with it. Give a network call a `timeout`, since the trainer waits for the function to return. The one ending nothing can announce is a process killed outright.
 
 ---
 
