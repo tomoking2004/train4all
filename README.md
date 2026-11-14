@@ -72,6 +72,7 @@ train4all is a minimal PyTorch training framework. Subclass `BaseTrainer`, imple
   - [Notifications](#notifications)
   - [Utilities](#utilities)
   - [Development](#development)
+    - [Scripts](#scripts)
   - [License](#license)
 
 ---
@@ -1007,6 +1008,18 @@ Coverage is a property of the *whole* suite, so its floor is enforced only when 
 `ruff check`, `mypy`, and `pytest --cov` run in CI on every push and pull request, once per Python version this package claims to support. That matrix is not a second list to keep in step by hand: `tests/test_docs.py` holds it equal to pyproject's classifiers, so a version promised in the metadata cannot go untested.
 
 The suite also holds this README to the code: every exported name, constructor argument, class constant, and dashboard setting must appear here, or `tests/test_public_api.py` fails. The API reference above cannot quietly fall behind the thing it describes.
+
+### Scripts
+
+`scripts/` holds what the README is made from. The images in `assets/` are not drawn by hand — a script shoots them from the code — and the Quick Start is run from this file rather than from a copy of it, so neither can fall behind what it shows. The extra packages these scripts need are not in `pyproject.toml`, which lists only what train4all itself and its checks depend on.
+
+| Command | Purpose |
+| :-- | :-- |
+| `python scripts/shoot.py` | Rewrite all four images in `assets/`. The dashboard shots are a staged run played into a real browser; the console shot is the [Quick Start](#quick-start) above, read out of this file and run on MNIST. Takes about two minutes. |
+| `python scripts/demo_dashboard.py` | Open the dashboard on that same staged run and hold it there — the way to look at a change to the dashboard before shooting it. |
+| `python scripts/quickstart.py` | Run the [Quick Start](#quick-start) as printed above — the code is read out of this file, not kept as a copy. Runs from the repository root and deletes `run/` first, so it is always a first run. Needs only `torchvision`. |
+
+`shoot.py` needs `pip install playwright pillow torchvision`, and drives the installed Microsoft Edge, so there is no browser to download. Its runs live in temp folders, so the images are the only tracked files it touches. `demo_dashboard.py` needs nothing beyond train4all itself.
 
 ---
 
